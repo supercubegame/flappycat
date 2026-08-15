@@ -3,25 +3,33 @@
  * 浏览器闸门。真起页面、真敲键、真数像素。
  * ===========================================================================
  *
- * 上一轮这里红了两条，根因都在夹具：
+ * 两个“拍的数”已经没了，处理方式故意不同：
  *
- * 1. 前面一条断言把循环 setPaused(true) 之后没恢复，于是机器人那条等了 25 秒
- *    看着一个永远不动的分数。现在每条断言自己声明需要动还是需要静。
- * 2. 三张截图里有两张 sha 一模一样,因为它们在同一个被暂停的帧上拍的。
- *    现在截图前先用引擎确定性地推到指定帧，三张图互不相同是构造保证的。
+ * 1. **机器人得分不再是下限，是等号。** 之前写 `score >= 5`，而它等到 5 就停，
+ *    于是实测值永远恰好等于下限，那个数字什么也没告诉你。现在跑到固定帧数，
+ *    然后拿**同一份纯引擎在 Node 里跑同样帧数**做尺子，断言分数逐字相等。
+ *    猜的数因此不是“收紧”了，是消失了。
  *
- * 注意区分两件事：“三张图不同”只能证明画面变了，它不能证明画对了。
- * 承重的是横带像素等号那三条。
+ * 2. **帧率下限反而改松了。** 它只该抓“彻底卡死 / 白屏 / 死循环”，不是性能基准。
+ *    实测 40-42，而原来写 20,只有两倍余量，CI 上共享 CPU 拖一下就会假红，
+ *    而假红会逗人去改产品迁就尺子。现在 13，三倍余量，并且另配一条断言
+ *    守住“有人把它收得太紧”,两条判词不同，两侧都会红。
+ *
+ * 还有一个**探针**：shot-play 的 sha 连两轮完全不变，而 ready / dead 那两张在拖。
+ * 根因还没定案，所以这一轮不编原因，只把能分辨它的两个数报出来：
+ * canvas 自己的像素哈希（不含 CSS 合成与 PNG 编码）和三个字形签名。
  * ======================================================================== */
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { chromium } from 'playwright';
-import { CONFIG } from '../src/engine.mjs';
+import { CONFIG, botInput, createState, step } from '../src/engine.mjs';
 import { startServer } from './serve.mjs';
 
-const BOT_SCORE_MIN = 5; // TODO tighten from first real CI run
-const FPS_FLOOR = 20; // TODO tighten from first real CI run
+/* 只抓彻底卡死。实测基线是 run acc56bc 上的 40（上一轮 42）。 */
+const FPS_FLOOR = 13;
+const FPS_MEASURED_BASELINE = 40;
+const BOT_FRAMES = 720;
 const SHOT_SEED = 7;
 const SHOT_MIN_FRAMES = 300;
 
@@ -51,7 +59,6 @@ function eq(actual, expected, label){
   if (actual !== expected) throw new Error(label + ' expected ' + expected + ', got ' + actual);
 }
 
-/* 期望像素完全从引擎快照推导，不看画面。这才是“画面跟上了状态”那一半的意义。 */
 function expectedBandPixels(snap){
   const { y0, y1 } = CONFIG.SHOT_BAND;
   let body = 0;
@@ -62,10 +69,9 @@ function expectedBandPixels(snap){
     const bodyW = Math.max(0, Math.min(CONFIG.WORLD_W, x + CONFIG.PIPE_W) - Math.max(0, x));
     const capW = Math.max(0, Math.min(CONFIG.WORLD_W, x + CONFIG.PIPE_W + CONFIG.CAP_OVERHANG) -
                              Math.max(0, x - CONFIG.CAP_OVERHANG));
-    const topBodyH = Math.max(0, pipe.topH - CONFIG.CAP_H);
-    const bottomBodyH = Math.max(0, pipe.bottomH - CONFIG.CAP_H);
-    body += overlap(0, topBodyH) * bodyW;
-    body += overlap(pipe.bottomY + CONFIG.CAP_H, pipe.bottomY + CONFIG.CAP_H + bottomBodyH) * bodyW;
+    body += overlap(0, Math.max(0, pipe.topH - CONFIG.CAP_H)) * bodyW;
+    body += overlap(pipe.bottomY + CONFIG.CAP_H,
+                    pipe.bottomY + CONFIG.CAP_H + Math.max(0, pipe.bottomH - CONFIG.CAP_H)) * bodyW;
     cap += overlap(pipe.topH - CONFIG.CAP_H, pipe.topH) * capW;
     cap += overlap(pipe.bottomY, pipe.bottomY + CONFIG.CAP_H) * capW;
   }
@@ -73,14 +79,15 @@ function expectedBandPixels(snap){
 }
 
 async function shoot(page, name){
+  const canvasSha = await page.evaluate(() => window.__FLAPPY.canvasHash());
   const buffer = await page.locator('#game').screenshot({ type: 'png' });
   fs.writeFileSync(path.join(artifactsDir, name), buffer);
   metrics.shots.push({
     name,
     bytes: buffer.length,
     sha: crypto.createHash('sha256').update(buffer).digest('hex'),
+    canvasSha,
   });
-  return buffer;
 }
 
 const server = await startServer('.', 0);
@@ -110,10 +117,26 @@ await check('canvas-matches-engine-world-size', async () => {
 
 await check('cjk-renders-differently-from-guaranteed-tofu', async () => {
   const sig = await page.evaluate(() => ({
-    real: window.__FLAPPY.glyphSignature('\u8d77\u98de'),
+    cjk: window.__FLAPPY.glyphSignature('\u8d77\u98de'),
+    latin: window.__FLAPPY.glyphSignature('7'),
     tofu: window.__FLAPPY.glyphSignature('\uE000'),
   }));
-  assert(sig.real !== sig.tofu, 'CJK collapsed into tofu, runner is missing CJK fonts');
+  metrics.glyph = sig;
+  assert(sig.cjk !== sig.tofu, 'CJK collapsed into tofu, runner is missing CJK fonts');
+  assert(sig.latin !== sig.tofu, 'latin digit collapsed into tofu');
+});
+
+/* 同一个状态重画两次必须逐像素相等。这条把“渲染本身不确定”从候选名单里划掉，
+ * 让漂动的嘲疑范围缩到“跑与跑之间的环境差异”。 */
+await check('render-is-idempotent-for-the-same-state', async () => {
+  const pair = await page.evaluate(() => {
+    window.__FLAPPY.setPaused(true);
+    window.__FLAPPY.reset(7);
+    const a = window.__FLAPPY.canvasHash();
+    window.__FLAPPY.renderNow();
+    return { a, b: window.__FLAPPY.canvasHash() };
+  });
+  eq(pair.b, pair.a, 'repeated paint of the same state');
 });
 
 await check('ready-phase-has-zero-pipe-pixels', async () => {
@@ -135,38 +158,64 @@ await shoot(page, 'shot-ready.png');
 
 await check('space-starts-the-game-on-the-real-page', async () => {
   await page.evaluate(() => window.__FLAPPY.setPaused(false));
-  await page.locator('#game').click({ position: { x: 5, y: 5 }, force: true }).catch(() => {});
   await page.keyboard.press('Space');
   await page.waitForFunction(() => window.__FLAPPY.snapshot().phase !== 'ready', null, { timeout: 8000 });
   const snap = await page.evaluate(() => window.__FLAPPY.snapshot());
   assert(snap.flaps >= 1, 'flaps did not increment');
 });
 
-await check('bot-scores-on-the-real-animation-loop', async () => {
-  await page.evaluate(() => {
-    window.__FLAPPY.reset(7);
-    window.__FLAPPY.setBot(true);
-    window.__FLAPPY.setPaused(false);
-  });
-  await page.waitForFunction(
-    min => window.__FLAPPY.snapshot().score >= min,
-    BOT_SCORE_MIN,
-    { timeout: 40000 },
-  );
-  const snap = await page.evaluate(() => window.__FLAPPY.snapshot());
-  metrics.botScore = snap.score;
-  metrics.botJumps = snap.flaps;
-  assert(snap.score >= BOT_SCORE_MIN, 'bot score ' + snap.score + ' < floor ' + BOT_SCORE_MIN);
+await check('fps-floor-keeps-three-times-margin', async () => {
+  assert(FPS_FLOOR * 3 <= FPS_MEASURED_BASELINE,
+    'floor ' + FPS_FLOOR + ' is too tight against measured ' + FPS_MEASURED_BASELINE +
+    ' - a floor that normal jitter can hit is a false-red factory');
+  assert(FPS_FLOOR > 0, 'floor of zero would be an empty assertion');
 });
 
-await check('real-loop-advances-at-least-fps-floor', async () => {
+await check('real-loop-advances-above-fps-floor', async () => {
   const fps = await page.evaluate(async () => {
     const start = window.__FLAPPY.snapshot().frame;
     await new Promise(r => setTimeout(r, 1000));
     return window.__FLAPPY.snapshot().frame - start;
   });
   metrics.fps = fps;
-  assert(fps >= FPS_FLOOR, 'loop advanced only ' + fps + ' frames in 1s');
+  metrics.fpsFloor = FPS_FLOOR;
+  metrics.fpsBaseline = FPS_MEASURED_BASELINE;
+  assert(fps >= FPS_FLOOR, 'loop advanced only ' + fps + ' frames in 1s, page is effectively frozen');
+});
+
+/* 承重的那一条：浏览器里跑出来的分数必须逐字等于同一份纯引擎在 Node 里
+ * 跑同样帧数的分数。尺子是独立的（另一个进程、另一个堆），而且它不只守分数：
+ * 鸟的高度、存活管道数、相位都要对得上。 */
+await check('browser-run-equals-pure-engine-at-the-same-frame-count', async () => {
+  await page.evaluate(() => {
+    window.__FLAPPY.reset(7);
+    window.__FLAPPY.setBot(true);
+    window.__FLAPPY.setPaused(false);
+  });
+  await page.waitForFunction(
+    target => window.__FLAPPY.snapshot().frame >= target,
+    BOT_FRAMES,
+    { timeout: 45000 },
+  );
+  const snap = await page.evaluate(() => {
+    window.__FLAPPY.setPaused(true);
+    return window.__FLAPPY.snapshot();
+  });
+
+  let sim = createState(7);
+  for (let i = 0; i < snap.frame; i += 1) sim = step(sim, botInput(sim));
+
+  metrics.botFrames = snap.frame;
+  metrics.botScore = snap.score;
+  metrics.botJumps = snap.flaps;
+  metrics.engineScoreSameFrames = sim.score;
+
+  assert(sim.score > 0, 'the expectation itself is zero, frame budget is too small to reach any pipe');
+  eq(snap.phase, sim.phase, 'phase');
+  eq(snap.score, sim.score, 'browser score vs pure engine score at frame ' + snap.frame);
+  eq(snap.flaps, sim.flaps, 'flap count');
+  eq(snap.pipesLive, sim.pipes.length, 'live pipe count');
+  eq(Math.round(snap.birdY), Math.round(sim.bird.y), 'bird y');
 });
 
 await check('pipe-pixels-equal-engine-geometry', async () => {
@@ -191,7 +240,7 @@ await check('pipe-pixels-equal-engine-geometry', async () => {
   metrics.expectedCapPixels = expected.cap;
 
   eq(data.snap.phase, 'playing', 'phase at shot frame');
-  assert(expected.body > 0, 'expectation itself is empty, fixture did not reach pipes');
+  assert(expected.body > 0, 'expectation itself is empty, fixture never reached a pipe');
   eq(data.body, expected.body, 'pipe body pixels in band');
   eq(data.cap, expected.cap, 'pipe cap pixels in band');
   eq(data.panel, 0, 'playing phase must have no card panel pixels');
@@ -203,21 +252,16 @@ await shoot(page, 'shot-play.png');
 await check('death-card-geometry-is-exact', async () => {
   const data = await page.evaluate(args => {
     const snap = window.__FLAPPY.runToDeath(args.seed);
-    const ascent = (() => {
-      const c = document.createElement('canvas').getContext('2d');
-      c.font = 'bold 28px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-      return c.measureText('Game Over').actualBoundingBoxAscent;
-    })();
+    const c = document.createElement('canvas').getContext('2d');
+    c.font = 'bold 28px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
     return {
       snap,
-      ascent,
+      ascent: c.measureText('Game Over').actualBoundingBoxAscent,
       strip: window.__FLAPPY.countColorsInBand([window.__FLAPPY.colors.panel], args.strip.y0, args.strip.y1),
-      pipeBody: window.__FLAPPY.countColorsInBand([window.__FLAPPY.colors.pipeBody], args.strip.y0, args.strip.y1),
     };
-  }, { seed: SHOT_SEED, strip: CONFIG.DEAD_STRIP });
+  }, { strip: CONFIG.DEAD_STRIP, seed: SHOT_SEED });
 
-  const stripH = CONFIG.DEAD_STRIP.y1 - CONFIG.DEAD_STRIP.y0;
-  const expected = stripH * CONFIG.CARD_INNER_W;
+  const expected = (CONFIG.DEAD_STRIP.y1 - CONFIG.DEAD_STRIP.y0) * CONFIG.CARD_INNER_W;
   metrics.deadStripPixels = data.strip;
   metrics.expectedDeadStripPixels = expected;
   metrics.deadCause = data.snap.deathCause;
@@ -240,7 +284,8 @@ await check('space-restarts-after-death', async () => {
 
 await check('three-shots-are-distinct', async () => {
   eq(metrics.shots.length, 3, 'shot count');
-  eq(new Set(metrics.shots.map(s => s.sha)).size, 3, 'distinct shot hashes');
+  eq(new Set(metrics.shots.map(s => s.sha)).size, 3, 'distinct png hashes');
+  eq(new Set(metrics.shots.map(s => s.canvasSha)).size, 3, 'distinct canvas pixel hashes');
   for (const shot of metrics.shots) assert(shot.bytes > 1000, shot.name + ' is only ' + shot.bytes + ' bytes');
 });
 

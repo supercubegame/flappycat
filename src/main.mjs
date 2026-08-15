@@ -77,6 +77,15 @@ canvas.addEventListener('pointerdown', ev => {
 paint();
 raf = requestAnimationFrame(loop);
 
+function fnv(bytes){
+  let h = 2166136261;
+  for (let i = 0; i < bytes.length; i += 1){
+    h ^= bytes[i];
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
 function countColorsInBand(hexList, y0, y1){
   const top = Math.max(0, Math.min(canvas.height, y0));
   const bottom = Math.max(top, Math.min(canvas.height, y1));
@@ -93,32 +102,33 @@ function countColorsInBand(hexList, y0, y1){
   return count;
 }
 
-/* 缺字体的时候汉字会全退化成同一个方块。判断方法不是去猜方块长什么样，
- * 而是拿私用区的一个码位做基准,任何字体都没有它，它必然是方块。 */
-function glyphSignature(text){
+/* canvas 自己的像素哈希。它和元素截图的 sha 是两个不同的东西：
+ * 截图还包含 CSS 层（圆角裁切、阴影、背后的渐变）与 PNG 编码。
+ * 两个一起报出来，才分得出“画面在拖”和“合成/编码在拖”。 */
+function canvasHash(){
+  return fnv(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
+}
+
+/* 缺字体时汉字会全退化成同一个方块。判断方法不是去猜方块长什么样，
+ * 而是拿私用区的一个码位做基准：任何字体都没有它，它必然是方块。 */
+function glyphSignature(text, font){
   const off = document.createElement('canvas');
   off.width = 96;
   off.height = 96;
-  const c = off.getContext('2d');
+  const c = off.getContext('2d', { willReadFrequently: true });
   c.fillStyle = '#000';
   c.fillRect(0, 0, off.width, off.height);
   c.fillStyle = '#fff';
-  c.font = '42px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
+  c.font = font || '42px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
   c.textAlign = 'center';
   c.textBaseline = 'middle';
   c.fillText(text, off.width / 2, off.height / 2 + 2);
-  const d = c.getImageData(0, 0, off.width, off.height).data;
-  let h = 2166136261;
-  for (let i = 0; i < d.length; i += 1){
-    h ^= d[i];
-    h = Math.imul(h, 16777619) >>> 0;
-  }
-  return h.toString(16).padStart(8, '0');
+  return fnv(c.getImageData(0, 0, off.width, off.height).data);
 }
 
-/* 确定性截图用的推进器。不靠 rAF，所以同一个种子每次跑出来的画面一模一样。
- * 停在「管道水平方向不碰到鸟」的那一帧，不是硕死一个帧数,否则鸟会遮住管体
- * 像素，而那一笔算不进期望值里。 */
+/* 确定性推进器。不靠 rAF，所以同一个种子每次跑出来的画面一模一样。
+ * 停在“管道水平方向不碰到鸟”的那一帧，不是硕死一个帧数，否则鸟会遮住
+ * 管体像素，而那一笔算不进期望值里。 */
 function runToShotFrame(seed, minFrames){
   reset(seed);
   pause();
@@ -160,8 +170,8 @@ window.__FLAPPY = {
   isPaused: () => paused,
   setBot(flag){ bot = !!flag; },
   countColorsInBand,
+  canvasHash,
   glyphSignature,
   runToShotFrame,
   runToDeath,
-  toPng: () => canvas.toDataURL('image/png'),
 };

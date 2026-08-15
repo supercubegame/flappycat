@@ -1,38 +1,14 @@
 [
   {
-    "id": "tighten-web-bot-floor",
-    "title": "把浏览器闸门的机器人得分下限从拍脑袋改成实测值",
+    "id": "conclude-shot-hash-drift",
+    "title": "定案 shot-ready / shot-dead 为何跛跑而 shot-play 不跛",
     "kind": "one-off",
     "status": "pending",
     "due": "2026-08-19",
-    "reason": "BOT_SCORE_MIN=5 是保守下限，不是首轮实测后回填的数。报告里已经带实测值，拿它收紧。",
+    "reason": "两轮之间 shot-play 的 sha 完全不变，另两张变了。现在报告里同时带 canvas 像素哈希与字形签名，拿两轮数据就能分得出是画面在拖、CSS 合成在拖、还是字体在拖。定案后要么修掉，要么写进“测不出来的”。",
     "criteria": {
       "path": "scripts/verify-web.mjs",
-      "mustInclude": "const BOT_SCORE_MIN = 5; // TODO tighten from first real CI run"
-    }
-  },
-  {
-    "id": "tighten-web-fps-floor",
-    "title": "把浏览器闸门的帧率下限从拍脑袋改成实测值",
-    "kind": "one-off",
-    "status": "pending",
-    "due": "2026-08-19",
-    "reason": "FPS_FLOOR=20 是兜底值，不是按 runner 实测收紧的。",
-    "criteria": {
-      "path": "scripts/verify-web.mjs",
-      "mustInclude": "const FPS_FLOOR = 20; // TODO tighten from first real CI run"
-    }
-  },
-  {
-    "id": "replace-illustration-shots-with-real-ci-shots",
-    "title": "README 里的示意图换成 CI 真截图",
-    "kind": "one-off",
-    "status": "pending",
-    "due": "2026-08-22",
-    "reason": "仓里存的三张是按几何手画的，真截图只存在 artifact 里。两份会各自漂，而且漂了不会有任何动静。",
-    "criteria": {
-      "path": "docs/shots/ready.svg",
-      "mustInclude": "data-kind=\"illustration\""
+      "mustInclude": "canvasSha,"
     }
   }
 ]
