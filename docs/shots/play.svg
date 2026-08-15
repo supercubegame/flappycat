@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 640" width="480" height="640" data-kind="illustration" role="img" aria-label="FLAPPYCAT gameplay">
+  <title>FLAPPYCAT - playing</title>
+  <desc>Illustration drawn from engine geometry: pipe width 62, gap 158, cap 26 tall with 5px overhang, floor at 568.</desc>
+  <rect width="480" height="640" fill="#70c5ce"/>
+  <g fill="#dff7ff" opacity="0.45">
+    <circle cx="76" cy="112" r="24"/><circle cx="95" cy="102" r="19"/><circle cx="111" cy="112" r="22"/>
+    <circle cx="250" cy="82" r="14"/><circle cx="261" cy="76" r="11"/><circle cx="271" cy="82" r="13"/>
+  </g>
+  <g>
+    <rect x="206" y="0" width="62" height="175" fill="#4ec04e"/>
+    <rect x="201" y="175" width="72" height="26" fill="#2f8d2f"/>
+    <rect x="201" y="359" width="72" height="26" fill="#2f8d2f"/>
+    <rect x="206" y="385" width="62" height="183" fill="#4ec04e"/>
+  </g>
+  <g>
+    <rect x="414" y="0" width="62" height="87" fill="#4ec04e"/>
+    <rect x="409" y="87" width="72" height="26" fill="#2f8d2f"/>
+    <rect x="409" y="271" width="72" height="26" fill="#2f8d2f"/>
+    <rect x="414" y="297" width="62" height="271" fill="#4ec04e"/>
+  </g>
+  <rect x="0" y="568" width="480" height="72" fill="#a77645"/>
+  <rect x="0" y="568" width="480" height="14" fill="#86d85c"/>
+  <g transform="translate(132 296) rotate(11)">
+    <circle r="14" fill="#f7b733"/>
+    <ellipse cx="-3" cy="4" rx="8" ry="5.5" fill="#f08d1c" transform="rotate(-23)"/>
+    <polygon points="12,-1 24,2 12,5" fill="#ff7f24"/>
+    <circle cx="4" cy="-4" r="3.6" fill="#ffffff"/>
+    <circle cx="5" cy="-4" r="1.5" fill="#17353f"/>
+  </g>
+  <text x="240" y="66" font-size="40" font-weight="bold" text-anchor="middle" fill="#ffffff" stroke="#32505b" stroke-width="8" paint-order="stroke" font-family="Noto Sans CJK SC, Noto Sans, system-ui, sans-serif">7</text>
+</svg>

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 640" width="480" height="640" data-kind="illustration" role="img" aria-label="FLAPPYCAT game over screen">
+  <title>FLAPPYCAT - game over</title>
+  <desc>Illustration drawn from engine geometry. The web gate asserts the real card panel strip pixel count exactly.</desc>
+  <rect width="480" height="640" fill="#70c5ce"/>
+  <g fill="#dff7ff" opacity="0.45">
+    <circle cx="332" cy="148" r="20"/><circle cx="347" cy="140" r="16"/><circle cx="361" cy="148" r="18"/>
+  </g>
+  <g>
+    <rect x="96" y="0" width="62" height="221" fill="#4ec04e"/>
+    <rect x="91" y="221" width="72" height="26" fill="#2f8d2f"/>
+    <rect x="91" y="405" width="72" height="26" fill="#2f8d2f"/>
+    <rect x="96" y="431" width="62" height="137" fill="#4ec04e"/>
+  </g>
+  <g>
+    <rect x="304" y="0" width="62" height="130" fill="#4ec04e"/>
+    <rect x="299" y="130" width="72" height="26" fill="#2f8d2f"/>
+    <rect x="299" y="314" width="72" height="26" fill="#2f8d2f"/>
+    <rect x="304" y="340" width="62" height="228" fill="#4ec04e"/>
+  </g>
+  <rect x="0" y="568" width="480" height="72" fill="#a77645"/>
+  <rect x="0" y="568" width="480" height="14" fill="#86d85c"/>
+  <g transform="translate(132 540) rotate(37)">
+    <circle r="14" fill="#f7b733"/>
+    <ellipse cx="-3" cy="4" rx="8" ry="5.5" fill="#f08d1c" transform="rotate(-23)"/>
+    <polygon points="12,-1 24,2 12,5" fill="#ff7f24"/>
+    <circle cx="4" cy="-4" r="3.6" fill="#ffffff"/>
+    <circle cx="5" cy="-4" r="1.5" fill="#17353f"/>
+  </g>
+  <text x="240" y="66" font-size="40" font-weight="bold" text-anchor="middle" fill="#ffffff" stroke="#32505b" stroke-width="8" paint-order="stroke" font-family="Noto Sans CJK SC, Noto Sans, system-ui, sans-serif">4</text>
+  <rect x="87" y="112" width="306" height="172" rx="16" fill="#fff6d5" stroke="#6a5b3a" stroke-width="4"/>
+  <g fill="#17353f" text-anchor="middle" font-family="Noto Sans CJK SC, Noto Sans, system-ui, sans-serif">
+    <text x="240" y="168" font-size="28" font-weight="bold">Game Over</text>
+    <text x="240" y="204" font-size="18">得分 4</text>
+    <text x="240" y="232" font-size="18">你撞管道了</text>
+    <text x="240" y="262" font-size="18">按 Space 再来一局</text>
+  </g>
+</svg>
