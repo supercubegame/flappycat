@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { CONFIG, bestOf, botInput, createState, digest, gapRange, pipeGeometry, playFloor, sanitizeScore, snapshot, step } from '../src/engine.mjs';
+import { FIXTURES, storageCalls, storageKeyLiterals, stripCommentsAndStrings, unregisteredStorageCalls } from './storage-scan.mjs';
 
 const failures = [];
 let passed = 0;
@@ -12,7 +13,7 @@ const artifactsDir = path.resolve('artifacts');
 fs.mkdirSync(artifactsDir, { recursive: true });
 
 function check(name, fn){
-  const isMutation = /mutation|proves-itself/.test(name);
+  const isMutation = /mutation|proves-itself|self-proof/.test(name);
   if (isMutation) mutationChecks += 1;
   try {
     fn();
@@ -52,44 +53,6 @@ function runBot(seed, frames){
     if (state.phase === 'dead') break;
   }
   return state;
-}
-
-/* 剥注释与字符串。“某段里有没有 X”这类扫描必须先剥，否则两个方向都会骗人：
- * 注释里提到的词会让它误报，而“以后别在注释里写这些词”是拿产品迁就尺子。 */
-function stripCommentsAndStrings(source){
-  let out = '';
-  let i = 0;
-  let quote = null;
-  while (i < source.length){
-    const c = source[i];
-    const n = source[i + 1];
-    if (quote){
-      if (c === '\\'){ out += '  '; i += 2; continue; }
-      if (c === quote) quote = null;
-      out += ' ';
-      i += 1;
-      continue;
-    }
-    if (c === '"' || c === '\'' || c === '`'){ quote = c; out += ' '; i += 1; continue; }
-    if (c === '/' && n === '/'){
-      while (i < source.length && source[i] !== '\n'){ out += ' '; i += 1; }
-      continue;
-    }
-    if (c === '/' && n === '*'){
-      out += '  ';
-      i += 2;
-      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')){
-        out += source[i] === '\n' ? '\n' : ' ';
-        i += 1;
-      }
-      out += '  ';
-      i += 2;
-      continue;
-    }
-    out += c;
-    i += 1;
-  }
-  return out;
 }
 
 function listRepoFiles(){
@@ -144,26 +107,8 @@ function scanSecretShapes(text){
   return SECRET_PATTERNS.some(re => re.test(text));
 }
 
-/* 哨兵在运行时拼出来，源码里一个字符都不出现。上一版把它写成字面量，
- * 结果被密钥扫描器自己抓了,扫描是对的，说谎的是夹具。 */
 function sentinelToken(){
   return ['g', 'h', 'p'].join('') + '_' + 'AbCdEf0123456789AbCdEf0123456789';
-}
-
-/* 本地存储调用的白名单检查。剥掩之后字符串字面量会变成空白，所以
- * `localStorage.getItem(STORAGE.best)` 活下来，而 `localStorage.getItem('x')` 变成
- * `localStorage.getItem(   )`,后者就是未登记的键。白名单优于黑名单：
- * 新加一个键而忘了登记，默认不通过。 */
-function unregisteredStorageCalls(source){
-  const stripped = stripCommentsAndStrings(source);
-  const hits = [...stripped.matchAll(/localStorage\.(getItem|setItem|removeItem)\s*\(([^)]*)\)/g)];
-  return hits
-    .map(m => ({ method: m[1], arg: m[2].trim() }))
-    .filter(hit => !/^STORAGE\./.test(hit.arg) && !/^key$/.test(hit.arg));
-}
-
-function storageCallCount(source){
-  return [...stripCommentsAndStrings(source).matchAll(/localStorage\./g)].length;
 }
 
 function expectedScoreForFrames(frames){
@@ -279,8 +224,6 @@ check('ready-flap-starts-game', () => {
   assert(state.bird.vy < 0, 'flap should launch upward');
 });
 
-/* 20 帧不够把一次跳跃抵消完（按 FLAP_VY / GRAVITY 算需要 35 帧），那一轮红的是尺子。
- * 预算从参数推导再留余量，不凭手感填整数。 */
 check('gravity-pulls-down', () => {
   const framesToCancelFlap = Math.ceil(Math.abs(CONFIG.FLAP_VY) / CONFIG.GRAVITY) * 2;
   let state = step(createState(3), { flap: true });
@@ -415,10 +358,6 @@ check('dead-strip-sits-inside-card-clear-of-corners', () => {
   eq(CONFIG.CARD_INNER_W, CONFIG.CARD.w - CONFIG.CARD.stroke * 2, 'card inner width');
 });
 
-/* 死亡弹窗现在有五行（多了最高分）。行数、行间距、弹窗高度是一组：
- * 加一行而不动 hDead，最后一行会推出弹窗底那一刻，这条就红。
- * 字体基线到字底大约再往下 6px，取 10 留余量。真正拿实测字体度量去卡的
- * 那一条在浏览器闸门里,这里只能做几何层面的粗筛。 */
 check('dead-card-lines-fit-and-are-ordered', () => {
   const lines = CONFIG.DEAD_LINES;
   eq(lines.length, 5, 'dead card line count');
@@ -455,8 +394,6 @@ check('snapshot-contract-stable', () => {
   }
 });
 
-/* 最高分把 localStorage 带进了项目，声音带进了 AudioContext。两者都是 I/O，
- * 都不得出现在纯核心里,这两个词因此进了禁用名单。 */
 const IMPURE_TOKENS = ['Math.random', 'Date.now', 'fetch(', 'document.', 'window.',
                        'process.env', 'localStorage', 'AudioContext', 'requestAnimationFrame'];
 
@@ -489,28 +426,33 @@ check('stripper-does-not-false-positive-on-comments', () => {
 });
 
 check('storage-keys-are-registered-and-versioned', () => {
-  const source = fs.readFileSync('src/main.mjs', 'utf8');
-  const keys = [...source.matchAll(/^\s{2}(\w+): '([^']+)',$/gm)]
-    .map(m => m[2])
-    .filter(v => v.startsWith('flappycat.'));
+  const keys = storageKeyLiterals(fs.readFileSync('src/main.mjs', 'utf8'));
   assert(keys.length >= 2, 'expected at least two registered storage keys, got ' + keys.length);
   eq(new Set(keys).size, keys.length, 'storage key uniqueness');
-  for (const key of keys){
-    assert(/\.v\d+$/.test(key), 'key ' + key + ' has no version suffix');
-  }
+  for (const key of keys) assert(/\.v\d+$/.test(key), 'key ' + key + ' has no version suffix');
 });
 
 check('every-storage-call-goes-through-the-registry', () => {
   const source = fs.readFileSync('src/main.mjs', 'utf8');
-  assert(storageCallCount(source) >= 3, 'storage scanner found almost no calls, parser drifted');
+  const calls = storageCalls(source);
+  assert(calls.length >= 3, 'storage scanner found only ' + calls.length + ' calls, parser drifted');
   const offenders = unregisteredStorageCalls(source);
-  eq(offenders.map(o => o.method + '(' + o.arg + ')').join(', '), '', 'unregistered storage calls');
+  eq(offenders.map(o => o.method + '(' + o.firstArg + ')').join(', '), '', 'unregistered storage calls');
 });
 
-check('storage-whitelist-mutation-proves-itself', () => {
-  const mutant = 'const v = localStorage.getItem(\'flappycat.sneaky\');';
-  const offenders = unregisteredStorageCalls(mutant);
-  eq(offenders.length, 1, 'whitelist scanner missed a raw literal key');
+/* 两侧都要有样本。合法那侧是上一轮真红过的地方：扫描器把 setItem 的两个
+ * 参数一起抓了，于是一个完全合法的调用被当成违规报了出来。 */
+check('storage-scanner-self-proof-legal-calls-are-seen-and-allowed', () => {
+  for (const sample of FIXTURES.legal){
+    eq(storageCalls(sample).length, 1, 'scanner did not see the legal call: ' + sample);
+    eq(unregisteredStorageCalls(sample).length, 0, 'legal call falsely reported: ' + sample);
+  }
+});
+
+check('storage-scanner-self-proof-illegal-calls-are-caught', () => {
+  for (const sample of FIXTURES.illegal){
+    eq(unregisteredStorageCalls(sample).length, 1, 'scanner missed a raw literal key: ' + sample);
+  }
 });
 
 check('workflow-set-equals-registry', () => {
@@ -604,14 +546,17 @@ check('readme-documents-install-and-verify-commands', () => {
   assert(readme.includes('npm install'), 'README does not document npm install');
 });
 
-/* README 必须提到现在真存在的用户可见功能。它不是泛泛地扫“现时语气”,
- * 而是拿代码里真存在的东西（存储键、快捷键）当真值。 */
 check('readme-documents-features-that-exist-in-code', () => {
   const readme = fs.readFileSync('README.md', 'utf8');
   const main = fs.readFileSync('src/main.mjs', 'utf8');
-  if (main.includes('flappycat.best')) assert(/\u6700\u9ad8\u5206/.test(readme), 'README never mentions the best score');
-  if (main.includes('flappycat.muted')) assert(/\u58f0\u97f3/.test(readme), 'README never mentions the sound toggle');
-  if (main.includes("'KeyM'")) assert(/\bM\b/.test(readme), 'README never documents the M shortcut');
+  const keys = storageKeyLiterals(main);
+  if (keys.some(k => k.includes('best'))){
+    assert(readme.includes('\u6700\u9ad8\u5206'), 'README never mentions the best score');
+  }
+  if (keys.some(k => k.includes('muted'))){
+    assert(readme.includes('\u58f0\u97f3'), 'README never mentions the sound toggle');
+  }
+  if (main.includes('KeyM')) assert(/\bM\b/.test(readme), 'README never documents the M shortcut');
 });
 
 check('obligations-are-live-and-not-overdue', () => {
@@ -658,8 +603,6 @@ check('renderer-imports-pipe-geometry', () => {
   assert(!/PIPE_GAP\s*\//.test(stripCommentsAndStrings(source)), 'renderer recomputes gap math');
 });
 
-/* 基线坐标必须从 CONFIG 读。渲染层自己写一堆字面量的话，上面那几条几何断言
- * 验的就不是画面上真正在用的数字了,那才是真正的空断言。 */
 check('renderer-reads-card-baselines-from-config', () => {
   const stripped = stripCommentsAndStrings(fs.readFileSync('src/render.mjs', 'utf8'));
   const deadFn = stripped.slice(stripped.indexOf('export function drawDead'), stripped.indexOf('function card('));
