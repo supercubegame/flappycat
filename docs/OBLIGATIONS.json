@@ -1,0 +1,26 @@
+[
+  {
+    "id": "tighten-web-bot-floor",
+    "title": "把浏览器闸门的机器人得分下限从拍脑袋改成实测值",
+    "kind": "one-off",
+    "status": "pending",
+    "due": "2026-08-17",
+    "reason": "现在的 BOT_SCORE_MIN=5 只是保守下限，不是首轮实测后回填的数。",
+    "criteria": {
+      "path": "scripts/verify-web.mjs",
+      "mustInclude": "const BOT_SCORE_MIN = 5; // TODO tighten from first real CI run"
+    }
+  },
+  {
+    "id": "tighten-web-fps-floor",
+    "title": "把浏览器闸门的 fps 下限从拍脑袋改成实测值",
+    "kind": "one-off",
+    "status": "pending",
+    "due": "2026-08-17",
+    "reason": "FPS_FLOOR=20 现在只是兜底，不是按第一轮 runner 实测值收紧。",
+    "criteria": {
+      "path": "scripts/verify-web.mjs",
+      "mustInclude": "const FPS_FLOOR = 20; // TODO tighten from first real CI run"
+    }
+  }
+]
