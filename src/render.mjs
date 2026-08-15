@@ -96,28 +96,32 @@ export function drawHud(ctx, state){
 }
 
 export function drawReady(ctx, best){
+  const lines = CONFIG.READY_LINES;
   card(ctx, CONFIG.CARD.hReady);
   ctx.fillStyle = COLORS.ink;
   ctx.textAlign = 'center';
   ctx.font = 'bold 30px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-  ctx.fillText('FLAPPYCAT', CONFIG.WORLD_W / 2, 176);
+  ctx.fillText('FLAPPYCAT', CONFIG.WORLD_W / 2, lines[0]);
   ctx.font = '18px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-  ctx.fillText('\u6309 Space \u8d77\u98de', CONFIG.WORLD_W / 2, 210);
-  ctx.fillText('\u6700\u9ad8\u5206 ' + best, CONFIG.WORLD_W / 2, 238);
+  ctx.fillText('\u6309 Space \u8d77\u98de', CONFIG.WORLD_W / 2, lines[1]);
+  ctx.fillText('\u6700\u9ad8\u5206 ' + best, CONFIG.WORLD_W / 2, lines[2]);
 }
 
+/* 基线坐标从 CONFIG 读，不在这里写字面量。理由：闸门要断言“文字真的落在
+ * 弹窗内部”，而它拿的必须是渲染层真正用的那组数,两边各写一份就会各自漂。 */
 export function drawDead(ctx, state, best){
+  const lines = CONFIG.DEAD_LINES;
   card(ctx, CONFIG.CARD.hDead);
   ctx.fillStyle = COLORS.ink;
   ctx.textAlign = 'center';
   ctx.font = 'bold 28px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-  ctx.fillText('Game Over', CONFIG.WORLD_W / 2, CONFIG.DEAD_TITLE_BASELINE);
+  ctx.fillText('Game Over', CONFIG.WORLD_W / 2, lines[0]);
   ctx.font = '18px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-  ctx.fillText('\u5f97\u5206 ' + state.score, CONFIG.WORLD_W / 2, 206);
-  ctx.fillText('\u6700\u9ad8\u5206 ' + best, CONFIG.WORLD_W / 2, 232);
+  ctx.fillText('\u5f97\u5206 ' + state.score, CONFIG.WORLD_W / 2, lines[1]);
+  ctx.fillText('\u6700\u9ad8\u5206 ' + best, CONFIG.WORLD_W / 2, lines[2]);
   ctx.fillText(state.deathCause === 'pipe' ? '\u4f60\u649e\u7ba1\u9053\u4e86' : '\u4f60\u7838\u5230\u5730\u4e0a\u4e86',
-               CONFIG.WORLD_W / 2, 258);
-  ctx.fillText('\u6309 Space \u518d\u6765\u4e00\u5c40', CONFIG.WORLD_W / 2, 286);
+               CONFIG.WORLD_W / 2, lines[3]);
+  ctx.fillText('\u6309 Space \u518d\u6765\u4e00\u5c40', CONFIG.WORLD_W / 2, lines[4]);
 }
 
 function card(ctx, h){
