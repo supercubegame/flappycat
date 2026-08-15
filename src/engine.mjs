@@ -3,7 +3,8 @@
  * ===========================================================================
  *
  * 这个文件不碰 I/O：不读文件、不碰界面、不发请求、不取系统时间、不用未播种的
- * 随机源。闸门里有一条扫描在守这件事，而且它先剥掉注释再扫。
+ * 随机源，也不碰本地存储与音频。闸门里有一条扫描在守这件事，而且它先剥掉
+ * 注释再扫，所以这段说明本身不会把它骗过去。
  *
  * 契约：step(state, input) 返回**新**状态，绝不改入参。
  * ======================================================================== */
@@ -34,13 +35,15 @@ export const CONFIG = {
    *   - SHOT_BAND 必须落在死亡弹窗下沿之下、地面之上，否则管体像素会被遮。
    *   - DEAD_STRIP 必须在弹窗内部、避开圆角、且在标题上方。
    *   - CARD_INNER_W = CARD.w - stroke*2：描边居中，两侧各吃 stroke 一半宽。
+   * 死亡弹窗多了一行“最高分”，所以 hDead 从 172 涨到 200，弹窗下沿从 284
+   * 移到 298，于是 SHOT_BAND.y0 跟着从 300 移到 310。**这四个数是一组。**
    * 改任意一个必须重算其余，快闸门有两条断言在守。 */
-  CARD: { cy: 198, w: 306, hReady: 126, hDead: 172, radius: 16, stroke: 2 },
+  CARD: { cy: 198, w: 306, hReady: 126, hDead: 200, radius: 16, stroke: 2 },
   CARD_INNER_W: 302,
-  DEAD_STRIP: { y0: 130, y1: 145 },
-  DEAD_TITLE_BASELINE: 168,
+  DEAD_STRIP: { y0: 126, y1: 142 },
+  DEAD_TITLE_BASELINE: 172,
   HUD_BASELINE: 66,
-  SHOT_BAND: { y0: 300, y1: 560 },
+  SHOT_BAND: { y0: 310, y1: 560 },
 };
 
 export function playFloor(){
@@ -51,6 +54,22 @@ export function gapRange(){
   const lo = CONFIG.GAP_MARGIN;
   const hi = playFloor() - CONFIG.GAP_MARGIN;
   return { lo, hi, span: hi - lo };
+}
+
+/* 最高分的**规则**在这里，**存储**在外壳里。这么分的理由很具体：
+ * 规则是纯函数，能在快闸门里零依赖验；存储得真跑一个浏览器并真的重载页面。
+ * 两边各自那条断言因此也是不同的东西，不是同一条写两遍。
+ *
+ * 非法输入（NaN、负数、字符串、null）一律归 0,从本地存储读回来的东西
+ * 是用户可以随手改的，没有任何保证。 */
+export function sanitizeScore(value){
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n);
+}
+
+export function bestOf(previous, current){
+  return Math.max(sanitizeScore(previous), sanitizeScore(current));
 }
 
 function nextRand(seedState){

@@ -95,27 +95,29 @@ export function drawHud(ctx, state){
   ctx.fillText(text, CONFIG.WORLD_W / 2, CONFIG.HUD_BASELINE);
 }
 
-export function drawReady(ctx){
+export function drawReady(ctx, best){
   card(ctx, CONFIG.CARD.hReady);
   ctx.fillStyle = COLORS.ink;
   ctx.textAlign = 'center';
   ctx.font = 'bold 30px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-  ctx.fillText('FLAPPYCAT', CONFIG.WORLD_W / 2, 182);
+  ctx.fillText('FLAPPYCAT', CONFIG.WORLD_W / 2, 176);
   ctx.font = '18px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-  ctx.fillText('\u6309 Space \u8d77\u98de', CONFIG.WORLD_W / 2, 216);
-  ctx.fillText('\u7a7f\u8fc7\u7ba1\u9053\uff0c\u522b\u6454\u6b7b', CONFIG.WORLD_W / 2, 244);
+  ctx.fillText('\u6309 Space \u8d77\u98de', CONFIG.WORLD_W / 2, 210);
+  ctx.fillText('\u6700\u9ad8\u5206 ' + best, CONFIG.WORLD_W / 2, 238);
 }
 
-export function drawDead(ctx, state){
+export function drawDead(ctx, state, best){
   card(ctx, CONFIG.CARD.hDead);
   ctx.fillStyle = COLORS.ink;
   ctx.textAlign = 'center';
   ctx.font = 'bold 28px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
   ctx.fillText('Game Over', CONFIG.WORLD_W / 2, CONFIG.DEAD_TITLE_BASELINE);
   ctx.font = '18px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-  ctx.fillText('\u5f97\u5206 ' + state.score, CONFIG.WORLD_W / 2, 204);
-  ctx.fillText(state.deathCause === 'pipe' ? '\u4f60\u649e\u7ba1\u9053\u4e86' : '\u4f60\u7838\u5230\u5730\u4e0a\u4e86', CONFIG.WORLD_W / 2, 232);
-  ctx.fillText('\u6309 Space \u518d\u6765\u4e00\u5c40', CONFIG.WORLD_W / 2, 262);
+  ctx.fillText('\u5f97\u5206 ' + state.score, CONFIG.WORLD_W / 2, 206);
+  ctx.fillText('\u6700\u9ad8\u5206 ' + best, CONFIG.WORLD_W / 2, 232);
+  ctx.fillText(state.deathCause === 'pipe' ? '\u4f60\u649e\u7ba1\u9053\u4e86' : '\u4f60\u7838\u5230\u5730\u4e0a\u4e86',
+               CONFIG.WORLD_W / 2, 258);
+  ctx.fillText('\u6309 Space \u518d\u6765\u4e00\u5c40', CONFIG.WORLD_W / 2, 286);
 }
 
 function card(ctx, h){
@@ -140,11 +142,11 @@ function roundRect(ctx, x, y, w, h, r){
   ctx.closePath();
 }
 
-export function render(ctx, state){
+export function render(ctx, state, best = 0){
   drawBackground(ctx);
   drawPipes(ctx, state);
   drawBird(ctx, state);
   if (state.phase !== 'ready') drawHud(ctx, state);
-  if (state.phase === 'ready') drawReady(ctx);
-  if (state.phase === 'dead') drawDead(ctx, state);
+  if (state.phase === 'ready') drawReady(ctx, best);
+  if (state.phase === 'dead') drawDead(ctx, state, best);
 }
