@@ -8,25 +8,23 @@
  * 1. **机器人得分不再是下限，是等号。** 之前写 score >= 5，而它等到 5 就停，
  *    于是实测值永远恰好等于下限，那个数字什么也告诉不了你。现在跑到固定帧数，
  *    然后拿**同一份纯引擎在 Node 里跑同样帧数**做尺子，断言逐字相等。
- * 2. **帧率下限反而改松了。** 它只该抓彻底卡死，不是性能基准。紧到正常波动
- *    就会撞的下限是一台假红工厂，而假红会逗人去改产品迁就尺子。
+ * 2. **帧率下限反而改松了**，参数与两条判词相反的守卫在 fps-floor.mjs 里。
  *
  * 最高分与声音这两块的断言设计：
  *
- * - 最高分验的是**真的重载页面**之后还在。读一下内存里的变量证明不了持久化,
+ * - 最高分验的是**真的重载页面**之后还在。读一下内存里的变量证明不了持久化，
  *   而持久化正是这个功能的全部内容。另外先拿分再死，否则得到的是一条 0 == 0。
- * - 声音验的是“真的创建并启动了音源节点”，**不是“能听到”**,后者 CI 验不了，
- *   已经写进 README 的“测不出来的”。两个方向都要红：开着必须增加，关了必须一个不增。
+ * - 声音验的是“真的创建并启动了音源节点”，**不是“能听到”**，后者 CI 验不了，
+ *   已经写进 README 的“测不出来的”。两个方向都要红。
  * ======================================================================== */
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { chromium } from 'playwright';
 import { CONFIG, botInput, createState, step } from '../src/engine.mjs';
+import { FPS_FLOOR, FPS_MEASURED_BASELINE, FPS_MARGIN_MULTIPLE, floorIsNotEmpty, floorKeepsMargin } from './fps-floor.mjs';
 import { startServer } from './serve.mjs';
 
-const FPS_FLOOR = 13;
-const FPS_MEASURED_BASELINE = 38;
 const BOT_FRAMES = 720;
 const SHOT_SEED = 7;
 const SHOT_MIN_FRAMES = 300;
@@ -136,10 +134,6 @@ await check('local-storage-is-actually-available', async () => {
   assert(!degraded, 'storage already degraded to memory, every persistence assertion below would be vacuous');
 });
 
-/* ---------------------------------------------------------------------------
- * 最高分持久化
- * ------------------------------------------------------------------------ */
-
 await check('fresh-storage-means-zero-best', async () => {
   await page.evaluate(() => window.__FLAPPY.wipeStorage());
   await boot(page, server.url);
@@ -194,10 +188,6 @@ await check('hud-best-matches-the-stored-best', async () => {
   eq(Number(data.pill), data.best, 'best pill vs stored best');
 });
 
-/* ---------------------------------------------------------------------------
- * 声音开关
- * ------------------------------------------------------------------------ */
-
 await check('audio-context-exists-in-this-runner', async () => {
   const audio = await page.evaluate(() => window.__FLAPPY.audio());
   metrics.audio = audio;
@@ -206,32 +196,27 @@ await check('audio-context-exists-in-this-runner', async () => {
 });
 
 await check('sound-on-really-starts-an-audio-node', async () => {
-  const result = await page.evaluate(() => {
+  const before = await page.evaluate(() => {
     window.__FLAPPY.setPaused(true);
     window.__FLAPPY.setMuted(false);
     window.__FLAPPY.reset(7);
-    const before = window.__FLAPPY.audio();
-    window.__FLAPPY.feed({ flap: true });
-    document.dispatchEvent(new Event('noop'));
-    const mid = window.__FLAPPY.audio();
-    return { before, mid };
+    return window.__FLAPPY.audio();
   });
-  // feed() 不发声，发声的是真正的按键路径，所以这里用真键盘事件。
   await page.keyboard.press('Space');
   const after = await page.evaluate(() => window.__FLAPPY.audio());
-  metrics.audioStartsUnmuted = after.starts;
+  metrics.audioStartsUnmuted = after.starts - before.starts;
   eq(after.failures, 0, 'audio node failures while unmuted');
-  assert(after.starts > result.mid.starts,
+  assert(after.starts > before.starts,
     'pressing Space with sound on started no audio node (starts stayed at ' + after.starts + ')');
 });
 
 await check('muting-starts-no-audio-node-at-all', async () => {
-  await page.evaluate(() => {
+  const before = await page.evaluate(() => {
     window.__FLAPPY.setPaused(true);
     window.__FLAPPY.setMuted(true);
     window.__FLAPPY.reset(7);
+    return window.__FLAPPY.audio();
   });
-  const before = await page.evaluate(() => window.__FLAPPY.audio());
   await page.keyboard.press('Space');
   await page.keyboard.press('Space');
   const after = await page.evaluate(() => window.__FLAPPY.audio());
@@ -274,11 +259,6 @@ await check('mute-preference-survives-a-real-page-reload', async () => {
   eq(unmuted.attr, '0', 'button data attribute after reload');
 });
 
-/* ---------------------------------------------------------------------------
- * 画面与循环。从这里开始把存储抹干净并重载，让三张截图确定性地可重现
- * （最高分会画在弹窗上，不抹的话它会跟着上面那几条断言的结果走）。
- * ------------------------------------------------------------------------ */
-
 await page.evaluate(() => window.__FLAPPY.wipeStorage());
 await boot(page, server.url);
 
@@ -318,11 +298,22 @@ await check('space-starts-the-game-on-the-real-page', async () => {
   assert(snap.flaps >= 1, 'flaps did not increment');
 });
 
-await check('fps-floor-keeps-three-times-margin', async () => {
-  assert(FPS_FLOOR * 3 <= FPS_MEASURED_BASELINE,
-    'floor ' + FPS_FLOOR + ' is too tight against measured ' + FPS_MEASURED_BASELINE +
-    ' - a floor that normal jitter can hit is a false-red factory');
-  assert(FPS_FLOOR > 0, 'floor of zero would be an empty assertion');
+/* 两条判词相反的守卫。上一轮“太紧”那条真的红了，而违反它的人是我自己：
+ * 13*3 = 39 > 38。正确动作是改下限，不是把三倍放宽成两倍。 */
+await check('fps-floor-is-not-an-empty-assertion', async () => {
+  assert(floorIsNotEmpty(), 'a floor of ' + FPS_FLOOR + ' can never fail');
+});
+
+await check('fps-floor-keeps-its-margin-against-the-measured-baseline', async () => {
+  assert(floorKeepsMargin(),
+    'floor ' + FPS_FLOOR + ' x' + FPS_MARGIN_MULTIPLE + ' exceeds measured baseline ' +
+    FPS_MEASURED_BASELINE + ' - a floor that normal jitter can hit is a false-red factory');
+});
+
+await check('fps-margin-guard-mutation-proves-itself', async () => {
+  assert(!floorKeepsMargin(FPS_MEASURED_BASELINE, FPS_MEASURED_BASELINE),
+    'the margin guard would accept a floor equal to the baseline, so it is decorative');
+  assert(!floorIsNotEmpty(0), 'the empty-floor guard accepts zero');
 });
 
 await check('real-loop-advances-above-fps-floor', async () => {
