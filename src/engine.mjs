@@ -3,8 +3,7 @@
  * ===========================================================================
  *
  * 这个文件不碰 I/O：不读文件、不碰界面、不发请求、不取系统时间、不用未播种的
- * 随机源。闸门里有一条扫描在守这件事，而且它先剥掉注释再扫,所以这段说明本身
- * 不会把它骗过去。
+ * 随机源。闸门里有一条扫描在守这件事，而且它先剥掉注释再扫。
  *
  * 契约：step(state, input) 返回**新**状态，绝不改入参。
  * ======================================================================== */
@@ -26,16 +25,20 @@ export const CONFIG = {
   CAP_H: 26,
   CAP_OVERHANG: 5,
 
-  /* 两根相邻管道缝隙中心最大可能的高差。它必须等于 gapRange().span,
-   * 有一条等号断言把两头钉在一起，改 GAP_MARGIN 而不重算这个数就会红。
-   * 另一条断言要求机器人在两管之间真的爬得上这么多,那一条量的是行为，
-   * 不是拄计划值做乘法。 */
+  /* 两根相邻管道缝隙中心最大可能的高差。它必须等于 gapRange().span，有一条
+   * 等号断言把两头钉在一起；另一条断言要求机器人在两管之间真的爬得上这么多。
+   * 改 GAP_MARGIN 而不重算这个数会红，把它改到物理上爬不上去也会红。 */
   MAX_GAP_DELTA: 320,
 
-  /* 弹窗与 HUD 的几何。浏览器闸门的像素等号只数 SHOT_BAND 这一条横带，
-   * 而那条横带必须落在弹窗下沿之下、地面之上。这三组参数是耦合的，
-   * 有断言在守，变异体证明过它会红。 */
-  CARD: { cy: 198, w: 306, hReady: 126, hDead: 172 },
+  /* 弹窗与 HUD 几何。浏览器闸门的两条像素等号吃这组参数：
+   *   - SHOT_BAND 必须落在死亡弹窗下沿之下、地面之上，否则管体像素会被遮。
+   *   - DEAD_STRIP 必须在弹窗内部、避开圆角、且在标题上方。
+   *   - CARD_INNER_W = CARD.w - stroke*2：描边居中，两侧各吃 stroke 一半宽。
+   * 改任意一个必须重算其余，快闸门有两条断言在守。 */
+  CARD: { cy: 198, w: 306, hReady: 126, hDead: 172, radius: 16, stroke: 2 },
+  CARD_INNER_W: 302,
+  DEAD_STRIP: { y0: 130, y1: 145 },
+  DEAD_TITLE_BASELINE: 168,
   HUD_BASELINE: 66,
   SHOT_BAND: { y0: 300, y1: 560 },
 };
@@ -74,7 +77,7 @@ export function createState(seed = 1){
   };
 }
 
-/* 管道几何只有这一份。渲染层和闸门都读它,画法和期望像素数因此不会各自漂。 */
+/* 管道几何只有这一份。渲染层和闸门都读它，画法和期望像素数因此不会各自漂。 */
 export function pipeGeometry(pipe){
   const half = CONFIG.PIPE_GAP / 2;
   const topH = Math.round(pipe.gapCenter - half);
@@ -86,8 +89,7 @@ export function collide(bird, pipes){
   const r = CONFIG.BIRD_R;
   if (bird.y + r >= playFloor()) return 'ground';
   for (const p of pipes){
-    const overlapX = CONFIG.BIRD_X + r > p.x && CONFIG.BIRD_X - r < p.x + CONFIG.PIPE_W;
-    if (!overlapX) continue;
+    if (!(CONFIG.BIRD_X + r > p.x && CONFIG.BIRD_X - r < p.x + CONFIG.PIPE_W)) continue;
     const g = pipeGeometry(p);
     if (bird.y - r < g.topH || bird.y + r > g.bottomY) return 'pipe';
   }
@@ -103,8 +105,8 @@ export function nextPipe(state){
   return best;
 }
 
-/* 机器人策略。它是闸门的主力：一个能连过十几根管道的策略，证明的是关卡真的
- * 可通过、计分真的在走、碰撞真的在拦。浏览器闸门里跑的是同一份。 */
+/* 机器人策略。它是闸门的主力：一个能连过十几根管道的策略，同时证明关卡可通过、
+ * 计分在走、碰撞在拦。浏览器闸门里跑的是同一份。 */
 export function botInput(state){
   if (state.phase === 'ready') return { flap: true };
   if (state.phase === 'dead') return { flap: false };
@@ -179,7 +181,7 @@ export function step(state, input){
   return s;
 }
 
-/* 只读诊断出口。字段可以增加，不能删改,闸门认这些名字。 */
+/* 只读诊断出口。字段可以增加，不能删改，闸门认这些名字。 */
 export function snapshot(state){
   const p = nextPipe(state);
   return {

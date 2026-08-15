@@ -1,10 +1,9 @@
 import { CONFIG, pipeGeometry, playFloor } from './engine.mjs';
 import { COLORS } from './palette.mjs';
 
-/* 管道故意只用**整数坐标的平色矩形**：不描边、不渐变、不反锥齿。
- * 上一版给管体描了一圈 2px 边，而描边会吃掉一部分 body 像素,
- * 那会把浏览器闸门那条像素等号断言逗成一笔算不清的账。
- * 要加装饰层的话，先把它的面积算进期望值里。 */
+/* 管道故意只用**整数坐标的平色矩形**：不描边、不渐变、不透明。
+ * 描边会吃掉一部分 body 像素，把浏览器闸门那条像素等号逗成一笔算不清的账。
+ * 要加装饰，先把它的面积算进期望值里。快闸门有一条扫描在守这一条。 */
 export function drawBackground(ctx){
   ctx.fillStyle = COLORS.sky;
   ctx.fillRect(0, 0, CONFIG.WORLD_W, CONFIG.WORLD_H);
@@ -101,10 +100,10 @@ export function drawReady(ctx){
   ctx.fillStyle = COLORS.ink;
   ctx.textAlign = 'center';
   ctx.font = 'bold 30px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-  ctx.fillText('FLAPPYCAT', CONFIG.WORLD_W / 2, 176);
+  ctx.fillText('FLAPPYCAT', CONFIG.WORLD_W / 2, 182);
   ctx.font = '18px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-  ctx.fillText('按 Space 起飞', CONFIG.WORLD_W / 2, 212);
-  ctx.fillText('穿过管道，别摔死', CONFIG.WORLD_W / 2, 240);
+  ctx.fillText('\u6309 Space \u8d77\u98de', CONFIG.WORLD_W / 2, 216);
+  ctx.fillText('\u7a7f\u8fc7\u7ba1\u9053\uff0c\u522b\u6454\u6b7b', CONFIG.WORLD_W / 2, 244);
 }
 
 export function drawDead(ctx, state){
@@ -112,11 +111,11 @@ export function drawDead(ctx, state){
   ctx.fillStyle = COLORS.ink;
   ctx.textAlign = 'center';
   ctx.font = 'bold 28px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-  ctx.fillText('Game Over', CONFIG.WORLD_W / 2, 158);
+  ctx.fillText('Game Over', CONFIG.WORLD_W / 2, CONFIG.DEAD_TITLE_BASELINE);
   ctx.font = '18px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-  ctx.fillText('得分 ' + state.score, CONFIG.WORLD_W / 2, 198);
-  ctx.fillText(state.deathCause === 'pipe' ? '你撞管道了' : '你砸到地上了', CONFIG.WORLD_W / 2, 226);
-  ctx.fillText('按 Space 再来一局', CONFIG.WORLD_W / 2, 258);
+  ctx.fillText('\u5f97\u5206 ' + state.score, CONFIG.WORLD_W / 2, 204);
+  ctx.fillText(state.deathCause === 'pipe' ? '\u4f60\u649e\u7ba1\u9053\u4e86' : '\u4f60\u7838\u5230\u5730\u4e0a\u4e86', CONFIG.WORLD_W / 2, 232);
+  ctx.fillText('\u6309 Space \u518d\u6765\u4e00\u5c40', CONFIG.WORLD_W / 2, 262);
 }
 
 function card(ctx, h){
@@ -125,8 +124,8 @@ function card(ctx, h){
   const y = CONFIG.CARD.cy - h / 2;
   ctx.fillStyle = COLORS.panel;
   ctx.strokeStyle = COLORS.panelBorder;
-  ctx.lineWidth = 4;
-  roundRect(ctx, x, y, w, h, 16);
+  ctx.lineWidth = CONFIG.CARD.stroke * 2;
+  roundRect(ctx, x, y, w, h, CONFIG.CARD.radius);
   ctx.fill();
   ctx.stroke();
 }

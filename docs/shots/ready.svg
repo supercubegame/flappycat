@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 640" width="480" height="640" data-kind="illustration" role="img" aria-label="FLAPPYCAT ready screen">
+  <title>FLAPPYCAT - ready</title>
+  <desc>Illustration drawn from engine geometry. Real browser screenshots are produced by the web gate on every CI run.</desc>
+  <rect width="480" height="640" fill="#70c5ce"/>
+  <g fill="#dff7ff" opacity="0.45">
+    <circle cx="76" cy="112" r="24"/><circle cx="95" cy="102" r="19"/><circle cx="111" cy="112" r="22"/>
+    <circle cx="332" cy="148" r="20"/><circle cx="347" cy="140" r="16"/><circle cx="361" cy="148" r="18"/>
+    <circle cx="250" cy="82" r="14"/><circle cx="261" cy="76" r="11"/><circle cx="271" cy="82" r="13"/>
+  </g>
+  <rect x="0" y="568" width="480" height="72" fill="#a77645"/>
+  <rect x="0" y="568" width="480" height="14" fill="#86d85c"/>
+  <g transform="translate(132 284)">
+    <circle r="14" fill="#f7b733"/>
+    <ellipse cx="-3" cy="4" rx="8" ry="5.5" fill="#f08d1c" transform="rotate(-23)"/>
+    <polygon points="12,-1 24,2 12,5" fill="#ff7f24"/>
+    <circle cx="4" cy="-4" r="3.6" fill="#ffffff"/>
+    <circle cx="5" cy="-4" r="1.5" fill="#17353f"/>
+  </g>
+  <rect x="87" y="135" width="306" height="126" rx="16" fill="#fff6d5" stroke="#6a5b3a" stroke-width="4"/>
+  <g fill="#17353f" text-anchor="middle" font-family="Noto Sans CJK SC, Noto Sans, system-ui, sans-serif">
+    <text x="240" y="182" font-size="30" font-weight="bold">FLAPPYCAT</text>
+    <text x="240" y="216" font-size="18">按 Space 起飞</text>
+    <text x="240" y="244" font-size="18">穿过管道，别摔死</text>
+  </g>
+</svg>

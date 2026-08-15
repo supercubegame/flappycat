@@ -16,15 +16,23 @@ concurrency:
 
 jobs:
   deploy:
+    name: 部署静态站
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+
+      # enablement: true 会尝试自动把 Pages 开起来。它不一定成功,靠仓库权限。
+      # 失败的时候这一步会直接红，不会静默跳过,那正是想要的行为。
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
+
       - id: deployment
         uses: actions/deploy-pages@v4
