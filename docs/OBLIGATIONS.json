@@ -1,14 +1,26 @@
 [
   {
-    "id": "conclude-shot-hash-drift",
-    "title": "定案 shot-ready / shot-dead 为何跛跑而 shot-play 不跛",
+    "id": "replace-illustration-shots-with-real-ci-shots",
+    "title": "README 里的示意图换成 CI 真截图",
     "kind": "one-off",
     "status": "pending",
-    "due": "2026-08-19",
-    "reason": "两轮之间 shot-play 的 sha 完全不变，另两张变了。现在报告里同时带 canvas 像素哈希与字形签名，拿两轮数据就能分得出是画面在拖、CSS 合成在拖、还是字体在拖。定案后要么修掉，要么写进“测不出来的”。",
+    "due": "2026-08-22",
+    "reason": "仓里存的三张是按几何手画的，真截图只存在 artifact 里。两份会各自漂，而且漂了不会有任何动静。示意图里的弹窗高度已经和真实的 hDead=200 不一致了。",
+    "criteria": {
+      "path": "docs/shots/ready.svg",
+      "mustInclude": "data-kind=\"illustration\""
+    }
+  },
+  {
+    "id": "assert-sound-is-actually-audible",
+    "title": "找一个能验“真的发出了声”的办法，或者确认做不到并正式归入测不出来的",
+    "kind": "one-off",
+    "status": "pending",
+    "due": "2026-08-23",
+    "reason": "现在的断言只能证明音源节点被创建并启动了，证明不了扬声器里有声音。OfflineAudioContext 渲染到缓冲区再测非零样本是一条看起来可行的路，但没验过。走不通就写进测不出来的，别留一句以后优化。",
     "criteria": {
       "path": "scripts/verify-web.mjs",
-      "mustInclude": "canvasSha,"
+      "mustInclude": "sound-on-really-starts-an-audio-node"
     }
   }
 ]

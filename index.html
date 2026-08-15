@@ -24,10 +24,9 @@
         display: grid;
         gap: 16px;
         justify-items: center;
+        padding: 24px 0;
       }
-      .title {
-        text-align: center;
-      }
+      .title { text-align: center; }
       .title h1 {
         margin: 0;
         font-size: clamp(28px, 5vw, 48px);
@@ -43,15 +42,17 @@
         border-radius: 20px;
         box-shadow: 0 24px 70px rgba(0,0,0,0.35);
         background: #70c5ce;
+        touch-action: manipulation;
       }
       .hud {
         display: flex;
-        gap: 16px;
+        gap: 12px;
         flex-wrap: wrap;
         justify-content: center;
+        align-items: center;
       }
       .pill {
-        min-width: 132px;
+        min-width: 118px;
         padding: 10px 14px;
         border-radius: 999px;
         background: rgba(255,255,255,0.1);
@@ -65,6 +66,18 @@
         text-transform: uppercase;
         letter-spacing: 0.08em;
       }
+      button {
+        font: inherit;
+        color: #0d2429;
+        background: #9fe4ec;
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 20px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      button:hover { background: #b8eef4; }
+      button[data-muted="1"] { background: #7f9298; color: #eef7f8; }
       .help {
         color: #cfe9ec;
         text-align: center;
@@ -77,14 +90,16 @@
     <main class="shell">
       <header class="title">
         <h1>FLAPPYCAT</h1>
-        <p>Space 起飞，穿过管道，别把猫摔死。</p>
+        <p>Space 或点击起飞，穿过管道，别把猫摔死。M 键切声音。</p>
       </header>
       <canvas id="game" width="480" height="640" aria-label="FLAPPYCAT game canvas"></canvas>
       <section class="hud">
         <div class="pill"><b>score</b><span id="score-value">0</span></div>
+        <div class="pill"><b>best</b><span id="best-value">0</span></div>
         <div class="pill"><b>phase</b><span id="phase-value">ready</span></div>
+        <button id="sound-toggle" type="button" aria-pressed="true">声音：开</button>
       </section>
-      <p class="help">这版故意做成纯前端、纯引擎。渲染层是薄壳，闸门直接读真实状态，不跟 UI 猜拳。</p>
+      <p class="help">最高分存在浏览器本地，不上传任何东西。这版故意做成纯前端、纯引擎：渲染层是薄壳，闸门直接读真实状态，不跟 UI 猜拳。</p>
     </main>
     <script type="module" src="./src/main.mjs"></script>
   </body>

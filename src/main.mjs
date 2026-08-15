@@ -1,10 +1,20 @@
-import { CONFIG, botInput, createState, snapshot, step } from './engine.mjs';
+import { CONFIG, bestOf, botInput, createState, sanitizeScore, snapshot, step } from './engine.mjs';
 import { COLORS } from './palette.mjs';
 import { render } from './render.mjs';
 
+/* 本地存储的键只在这一处声明。快闸门有一条扫描要求所有 localStorage 调用
+ * 都走 STORAGE.xxx，不得直接传字符串字面量,白名单形式，新加一个键而忘了
+ * 登记会红。带 v1 后缀是为了以后改存储格式时不会读到旧结构。 */
+const STORAGE = {
+  best: 'flappycat.best.v1',
+  muted: 'flappycat.muted.v1',
+};
+
 const canvas = document.getElementById('game');
 const scoreNode = document.getElementById('score-value');
+const bestNode = document.getElementById('best-value');
 const phaseNode = document.getElementById('phase-value');
+const soundButton = document.getElementById('sound-toggle');
 const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
 
 canvas.width = CONFIG.WORLD_W;
@@ -16,10 +26,132 @@ let bot = false;
 let raf = null;
 let lastTick = 0;
 
+/* 读本地存储永远可能抛（隐私模式、禁用第三方存储），而一个因为存不了最高分
+ * 就打不开的游戏是很蠢的。所以这里失败降级成内存，但**把降级记下来**，
+ * 并且把它暴露在诊断出口上,静默降级和“存储工作正常”在界面上一模一样。 */
+let storageDegraded = false;
+
+function readStorage(key){
+  try {
+    return window.localStorage.getItem(key);
+  } catch (error) {
+    storageDegraded = true;
+    return null;
+  }
+}
+
+function writeStorage(key, value){
+  try {
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    storageDegraded = true;
+    return false;
+  }
+}
+
+let best = sanitizeScore(readStorage(STORAGE.best));
+let muted = readStorage(STORAGE.muted) === '1';
+
+/* ---------------------------------------------------------------------------
+ * 声音。闸门验的是“真的创建并启动了一个音源节点”，不是“能听到”,
+ * 后者 CI 验不了，已经写进“测不出来的”那一节。
+ *
+ * soundStarts 只在**节点真的启动成功之后**才加。要是在“决定要响”那一刻就加，
+ * 它证明的只是我有意愿，而意愿不是行为。
+ * ------------------------------------------------------------------------ */
+let audioCtx = null;
+let soundStarts = 0;
+let soundFailures = 0;
+
+function audioContextClass(){
+  return window.AudioContext || window.webkitAudioContext || null;
+}
+
+function ensureAudio(){
+  if (audioCtx) return audioCtx;
+  const Ctor = audioContextClass();
+  if (!Ctor) return null;
+  try {
+    audioCtx = new Ctor();
+  } catch (error) {
+    soundFailures += 1;
+    return null;
+  }
+  return audioCtx;
+}
+
+function blip(freq, seconds, type){
+  if (muted) return false;
+  const ac = ensureAudio();
+  if (!ac) return false;
+  try {
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    osc.type = type || 'square';
+    osc.frequency.value = freq;
+    gain.gain.value = 0.06;
+    osc.connect(gain);
+    gain.connect(ac.destination);
+    const now = ac.currentTime;
+    osc.start(now);
+    osc.stop(now + seconds);
+    soundStarts += 1;
+    return true;
+  } catch (error) {
+    soundFailures += 1;
+    return false;
+  }
+}
+
+const sfx = {
+  flap: () => blip(660, 0.07, 'square'),
+  score: () => blip(990, 0.09, 'triangle'),
+  die: () => blip(180, 0.28, 'sawtooth'),
+};
+
+function renderSoundButton(){
+  if (!soundButton) return;
+  soundButton.textContent = muted ? '\u58f0\u97f3\uff1a\u5173' : '\u58f0\u97f3\uff1a\u5f00';
+  soundButton.setAttribute('aria-pressed', muted ? 'false' : 'true');
+  soundButton.dataset.muted = muted ? '1' : '0';
+}
+
+function setMuted(flag){
+  muted = !!flag;
+  writeStorage(STORAGE.muted, muted ? '1' : '0');
+  renderSoundButton();
+  return muted;
+}
+
+/* ------------------------------------------------------------------------ */
+
 function paint(){
-  render(ctx, state);
+  render(ctx, state, best);
   scoreNode.textContent = String(state.score);
+  bestNode.textContent = String(best);
   phaseNode.textContent = state.phase;
+}
+
+/* 每次状态推进之后都走这里，所以“死了就结算最高分”不依赖谁记得调用它。
+ * 规则走纯核心的 bestOf，这里只负责落盘。 */
+function settle(previousPhase){
+  if (state.phase === 'dead' && previousPhase !== 'dead'){
+    const next = bestOf(best, state.score);
+    if (next !== best){
+      best = next;
+      writeStorage(STORAGE.best, String(best));
+    }
+    sfx.die();
+  }
+}
+
+function advance(input){
+  const before = state;
+  state = step(state, input);
+  if (state.score > before.score) sfx.score();
+  settle(before.phase);
+  return state;
 }
 
 function pause(){
@@ -39,7 +171,7 @@ function loop(ts){
   if (!lastTick) lastTick = ts;
   if (ts - lastTick >= 1000 / 60){
     lastTick = ts;
-    state = step(state, bot ? botInput(state) : { flap: false });
+    advance(bot ? botInput(state) : { flap: false });
     paint();
   }
   if (!paused) raf = requestAnimationFrame(loop);
@@ -51,7 +183,7 @@ function reset(seed = 7){
 }
 
 function feed(input){
-  state = step(state, input);
+  advance(input);
   paint();
   return snapshot(state);
 }
@@ -61,10 +193,17 @@ function flap(){
     reset(state.seed);
     return snapshot(state);
   }
-  return feed({ flap: true });
+  const snap = feed({ flap: true });
+  sfx.flap();
+  return snap;
 }
 
 window.addEventListener('keydown', ev => {
+  if (ev.code === 'KeyM'){
+    ev.preventDefault();
+    setMuted(!muted);
+    return;
+  }
   if (ev.code !== 'Space') return;
   ev.preventDefault();
   flap();
@@ -73,7 +212,11 @@ canvas.addEventListener('pointerdown', ev => {
   ev.preventDefault();
   flap();
 });
+if (soundButton){
+  soundButton.addEventListener('click', () => setMuted(!muted));
+}
 
+renderSoundButton();
 paint();
 raf = requestAnimationFrame(loop);
 
@@ -102,15 +245,10 @@ function countColorsInBand(hexList, y0, y1){
   return count;
 }
 
-/* canvas 自己的像素哈希。它和元素截图的 sha 是两个不同的东西：
- * 截图还包含 CSS 层（圆角裁切、阴影、背后的渐变）与 PNG 编码。
- * 两个一起报出来，才分得出“画面在拖”和“合成/编码在拖”。 */
 function canvasHash(){
   return fnv(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
 }
 
-/* 缺字体时汉字会全退化成同一个方块。判断方法不是去猜方块长什么样，
- * 而是拿私用区的一个码位做基准：任何字体都没有它，它必然是方块。 */
 function glyphSignature(text, font){
   const off = document.createElement('canvas');
   off.width = 96;
@@ -126,15 +264,12 @@ function glyphSignature(text, font){
   return fnv(c.getImageData(0, 0, off.width, off.height).data);
 }
 
-/* 确定性推进器。不靠 rAF，所以同一个种子每次跑出来的画面一模一样。
- * 停在“管道水平方向不碰到鸟”的那一帧，不是硕死一个帧数，否则鸟会遮住
- * 管体像素，而那一笔算不进期望值里。 */
 function runToShotFrame(seed, minFrames){
   reset(seed);
   pause();
-  state = step(state, { flap: true });
+  advance({ flap: true });
   for (let guard = 0; guard < 1500; guard += 1){
-    state = step(state, botInput(state));
+    advance(botInput(state));
     if (state.phase !== 'playing') break;
     if (state.frame < minFrames) continue;
     const clear = state.pipes.every(p => {
@@ -151,9 +286,28 @@ function runToShotFrame(seed, minFrames){
 function runToDeath(seed){
   reset(seed);
   pause();
-  state = step(state, { flap: true });
+  advance({ flap: true });
   for (let guard = 0; guard < 1500 && state.phase === 'playing'; guard += 1){
-    state = step(state, { flap: false });
+    advance({ flap: false });
+  }
+  paint();
+  return snapshot(state);
+}
+
+/* 先拿分再死。最高分那条断言需要一个**非零**的分数，而 runToDeath 一下不扇
+ * 直接摔地上，分数永远是 0,拿它去验“最高分存下来了”会得到一条
+ * 0 == 0 的空断言。 */
+function runToDeathAfterScoring(seed, minScore){
+  reset(seed);
+  pause();
+  advance({ flap: true });
+  for (let guard = 0; guard < 3000; guard += 1){
+    if (state.phase !== 'playing') break;
+    if (state.score >= minScore) break;
+    advance(botInput(state));
+  }
+  for (let guard = 0; guard < 1500 && state.phase === 'playing'; guard += 1){
+    advance({ flap: false });
   }
   paint();
   return snapshot(state);
@@ -162,6 +316,7 @@ function runToDeath(seed){
 window.__FLAPPY = {
   config: CONFIG,
   colors: COLORS,
+  storageKeys: Object.assign({}, STORAGE),
   reset,
   feed,
   snapshot: () => snapshot(state),
@@ -174,4 +329,20 @@ window.__FLAPPY = {
   glyphSignature,
   runToShotFrame,
   runToDeath,
+  runToDeathAfterScoring,
+  getBest: () => best,
+  isMuted: () => muted,
+  setMuted,
+  clickSoundToggle: () => { soundButton.click(); return muted; },
+  soundToggleLabel: () => soundButton.textContent,
+  audio: () => ({
+    starts: soundStarts,
+    failures: soundFailures,
+    hasContextClass: !!audioContextClass(),
+    contextState: audioCtx ? audioCtx.state : null,
+  }),
+  storageDegraded: () => storageDegraded,
+  wipeStorage(){
+    for (const key of Object.values(STORAGE)) window.localStorage.removeItem(key);
+  },
 };

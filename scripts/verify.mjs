@@ -2,7 +2,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { CONFIG, botInput, createState, digest, gapRange, pipeGeometry, playFloor, snapshot, step } from '../src/engine.mjs';
+import { CONFIG, bestOf, botInput, createState, digest, gapRange, pipeGeometry, playFloor, sanitizeScore, snapshot, step } from '../src/engine.mjs';
+import { FIXTURES, storageCalls, storageKeyLiterals, stripCommentsAndStrings, unregisteredStorageCalls } from './storage-scan.mjs';
 
 const failures = [];
 let passed = 0;
@@ -12,7 +13,7 @@ const artifactsDir = path.resolve('artifacts');
 fs.mkdirSync(artifactsDir, { recursive: true });
 
 function check(name, fn){
-  const isMutation = /mutation|proves-itself/.test(name);
+  const isMutation = /mutation|proves-itself|self-proof/.test(name);
   if (isMutation) mutationChecks += 1;
   try {
     fn();
@@ -39,6 +40,12 @@ function approx(actual, expected, tol, label){
   }
 }
 
+function finite(value, label){
+  assert(Number.isFinite(value), label + ' is not a finite number, got ' + value +
+    ' - comparing against a non-number silently passes in one direction');
+  return value;
+}
+
 function runBot(seed, frames){
   let state = createState(seed);
   for (let i = 0; i < frames; i += 1){
@@ -46,44 +53,6 @@ function runBot(seed, frames){
     if (state.phase === 'dead') break;
   }
   return state;
-}
-
-/* 剥注释与字符串。“某段里有没有 X”这类扫描必须先剥，否则两个方向都会骗人：
- * 注释里提到的词会让它误报，而“以后别在注释里写这些词”是拿产品迁就尺子。 */
-function stripCommentsAndStrings(source){
-  let out = '';
-  let i = 0;
-  let quote = null;
-  while (i < source.length){
-    const c = source[i];
-    const n = source[i + 1];
-    if (quote){
-      if (c === '\\'){ out += '  '; i += 2; continue; }
-      if (c === quote) quote = null;
-      out += ' ';
-      i += 1;
-      continue;
-    }
-    if (c === '"' || c === '\'' || c === '`'){ quote = c; out += ' '; i += 1; continue; }
-    if (c === '/' && n === '/'){
-      while (i < source.length && source[i] !== '\n'){ out += ' '; i += 1; }
-      continue;
-    }
-    if (c === '/' && n === '*'){
-      out += '  ';
-      i += 2;
-      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')){
-        out += source[i] === '\n' ? '\n' : ' ';
-        i += 1;
-      }
-      out += '  ';
-      i += 2;
-      continue;
-    }
-    out += c;
-    i += 1;
-  }
-  return out;
 }
 
 function listRepoFiles(){
@@ -127,8 +96,6 @@ function teeBlocksMissingPipefail(yaml){
   return parseRunBlocks(yaml).filter(b => b.includes('| tee') && !/pipefail/.test(b));
 }
 
-/* 密钥形状扫描。上一轮这条红了，而它是对的：我把一个令牌形状的字面量写进了
- * 变异体里。仅一的修法是让哨兵在运行时拼出来，源码里一个字符都不出现。 */
 const SECRET_PATTERNS = [
   /ghp_[A-Za-z0-9]{20,}/,
   /github_pat_[A-Za-z0-9_]{20,}/,
@@ -153,7 +120,6 @@ function expectedScoreForFrames(frames){
   return state.score;
 }
 
-/* 两根管道之间机器人真的能爬多少。用引擎自己跑一遍量，不拄计划值做乘法。 */
 function measureMaxClimb(framesBetweenPipes){
   let state = createState(5);
   state.phase = 'playing';
@@ -173,6 +139,20 @@ function framesBetweenPipes(){
   return Math.floor(CONFIG.PIPE_SPACING / CONFIG.SCROLL);
 }
 
+function cardBounds(height){
+  return { top: CONFIG.CARD.cy - height / 2, bottom: CONFIG.CARD.cy + height / 2 };
+}
+
+check('config-numbers-are-finite', () => {
+  finite(CONFIG.MAX_GAP_DELTA, 'MAX_GAP_DELTA');
+  finite(CONFIG.CARD.hDead, 'CARD.hDead');
+  finite(CONFIG.CARD_INNER_W, 'CARD_INNER_W');
+  finite(CONFIG.SHOT_BAND.y0, 'SHOT_BAND.y0');
+  finite(CONFIG.DEAD_STRIP.y1, 'DEAD_STRIP.y1');
+  for (const [i, y] of CONFIG.DEAD_LINES.entries()) finite(y, 'DEAD_LINES[' + i + ']');
+  for (const [i, y] of CONFIG.READY_LINES.entries()) finite(y, 'READY_LINES[' + i + ']');
+});
+
 check('config-gap-range-positive', () => {
   assert(gapRange().span > 0, 'gap range collapsed');
 });
@@ -189,6 +169,29 @@ check('coupling-mutation-catches-margin-change-without-recompute', () => {
   } finally {
     CONFIG.GAP_MARGIN = prev;
   }
+});
+
+check('best-of-keeps-the-larger-score', () => {
+  eq(bestOf(5, 3), 5, 'previous larger');
+  eq(bestOf(3, 5), 5, 'current larger');
+  eq(bestOf(0, 0), 0, 'both zero');
+  eq(bestOf(7, 7), 7, 'equal');
+});
+
+check('best-of-sanitizes-hostile-storage-values', () => {
+  eq(bestOf('12', 3), 12, 'numeric string');
+  eq(bestOf(null, 4), 4, 'null previous');
+  eq(bestOf(undefined, 4), 4, 'undefined previous');
+  eq(bestOf(Number.NaN, 4), 4, 'NaN previous');
+  eq(bestOf(-99, 0), 0, 'negative previous');
+  eq(bestOf('drop table', 2), 2, 'garbage string');
+  eq(bestOf(Number.POSITIVE_INFINITY, 2), 2, 'infinity');
+  eq(sanitizeScore(4.9), 4, 'fractional score floors');
+});
+
+check('best-of-mutation-catches-always-taking-current', () => {
+  const mutant = (prev, cur) => sanitizeScore(cur);
+  assert(mutant(5, 3) !== bestOf(5, 3), 'a broken bestOf would survive this suite');
 });
 
 check('determinism-same-seed-same-digest', () => {
@@ -221,13 +224,12 @@ check('ready-flap-starts-game', () => {
   assert(state.bird.vy < 0, 'flap should launch upward');
 });
 
-/* 上一轮这条红了，而且红的是尺子：20 帧不够把一次跳跃抵消完。
- * FLAP_VY / GRAVITY 算下来回到原高度需要 35 帧，取 60 留余量。 */
 check('gravity-pulls-down', () => {
+  const framesToCancelFlap = Math.ceil(Math.abs(CONFIG.FLAP_VY) / CONFIG.GRAVITY) * 2;
   let state = step(createState(3), { flap: true });
   const y = state.bird.y;
-  for (let i = 0; i < 60; i += 1) state = step(state, { flap: false });
-  assert(state.bird.y > y, 'bird should fall back down, y ' + state.bird.y.toFixed(2) + ' vs ' + y.toFixed(2));
+  for (let i = 0; i < framesToCancelFlap; i += 1) state = step(state, { flap: false });
+  assert(state.bird.y > y, 'bird should fall back down after ' + framesToCancelFlap + ' frames');
 });
 
 check('ground-collision-kills', () => {
@@ -331,17 +333,58 @@ check('climb-proof-mutation-catches-impossible-delta', () => {
 });
 
 check('shot-band-sits-below-dead-card-and-above-ground', () => {
-  const cardBottom = CONFIG.CARD.cy + CONFIG.CARD.hDead / 2;
-  assert(CONFIG.SHOT_BAND.y0 > cardBottom, 'band overlaps dead card');
+  const dead = cardBounds(CONFIG.CARD.hDead);
+  assert(CONFIG.SHOT_BAND.y0 > dead.bottom,
+    'band y0 ' + CONFIG.SHOT_BAND.y0 + ' overlaps dead card bottom ' + dead.bottom);
   assert(CONFIG.SHOT_BAND.y1 < playFloor(), 'band reaches the ground strip');
   assert(CONFIG.SHOT_BAND.y0 > CONFIG.HUD_BASELINE, 'band overlaps HUD');
 });
 
+check('shot-band-mutation-catches-taller-card', () => {
+  const prev = CONFIG.CARD.hDead;
+  CONFIG.CARD.hDead = prev + 60;
+  try {
+    assert(!(CONFIG.SHOT_BAND.y0 > cardBounds(CONFIG.CARD.hDead).bottom),
+      'growing the card should push into the band');
+  } finally {
+    CONFIG.CARD.hDead = prev;
+  }
+});
+
 check('dead-strip-sits-inside-card-clear-of-corners', () => {
-  const cardTop = CONFIG.CARD.cy - CONFIG.CARD.hDead / 2;
-  assert(CONFIG.DEAD_STRIP.y0 >= cardTop + CONFIG.CARD.radius, 'strip touches rounded corner');
-  assert(CONFIG.DEAD_STRIP.y1 < CONFIG.DEAD_TITLE_BASELINE, 'strip runs into the title');
+  const dead = cardBounds(CONFIG.CARD.hDead);
+  assert(CONFIG.DEAD_STRIP.y0 >= dead.top + CONFIG.CARD.radius, 'strip touches rounded corner');
+  assert(CONFIG.DEAD_STRIP.y1 < CONFIG.DEAD_LINES[0], 'strip runs into the title baseline');
   eq(CONFIG.CARD_INNER_W, CONFIG.CARD.w - CONFIG.CARD.stroke * 2, 'card inner width');
+});
+
+check('dead-card-lines-fit-and-are-ordered', () => {
+  const lines = CONFIG.DEAD_LINES;
+  eq(lines.length, 5, 'dead card line count');
+  const dead = cardBounds(CONFIG.CARD.hDead);
+  assert(lines[0] > dead.top + CONFIG.CARD.radius, 'title sits in the corner radius');
+  assert(lines[lines.length - 1] + 10 <= dead.bottom,
+    'last line ' + lines[lines.length - 1] + ' does not fit above card bottom ' + dead.bottom);
+  for (let i = 1; i < lines.length; i += 1){
+    assert(lines[i] > lines[i - 1], 'line ' + i + ' is not below line ' + (i - 1));
+  }
+});
+
+check('dead-card-line-mutation-catches-overflow', () => {
+  const dead = cardBounds(CONFIG.CARD.hDead);
+  const mutant = [...CONFIG.DEAD_LINES.slice(0, -1), Math.round(dead.bottom) + 4];
+  assert(!(mutant[mutant.length - 1] + 10 <= dead.bottom), 'overflow check is decorative');
+});
+
+check('ready-card-lines-fit-and-are-ordered', () => {
+  const lines = CONFIG.READY_LINES;
+  eq(lines.length, 3, 'ready card line count');
+  const ready = cardBounds(CONFIG.CARD.hReady);
+  assert(lines[0] > ready.top + CONFIG.CARD.radius, 'title sits in the corner radius');
+  assert(lines[lines.length - 1] + 10 <= ready.bottom, 'last ready line overflows the card');
+  for (let i = 1; i < lines.length; i += 1){
+    assert(lines[i] > lines[i - 1], 'ready line ' + i + ' out of order');
+  }
 });
 
 check('snapshot-contract-stable', () => {
@@ -351,25 +394,65 @@ check('snapshot-contract-stable', () => {
   }
 });
 
+const IMPURE_TOKENS = ['Math.random', 'Date.now', 'fetch(', 'document.', 'window.',
+                       'process.env', 'localStorage', 'AudioContext', 'requestAnimationFrame'];
+
 check('engine-purity-scan', () => {
   const stripped = stripCommentsAndStrings(fs.readFileSync('src/engine.mjs', 'utf8'));
   assert(stripped.length > 1500, 'stripped engine suspiciously small: ' + stripped.length);
   assert(/export function step/.test(stripped), 'step missing after strip');
   assert(/export function collide/.test(stripped), 'collide missing after strip');
-  for (const needle of ['Math.random', 'Date.now', 'fetch(', 'document.', 'window.', 'process.env']){
-    assert(!stripped.includes(needle), 'impure token ' + needle);
+  assert(/export function bestOf/.test(stripped), 'bestOf missing after strip');
+  for (const needle of IMPURE_TOKENS){
+    assert(!stripped.includes(needle), 'impure token ' + needle + ' in engine');
   }
 });
 
 check('purity-scan-mutation-proves-itself', () => {
-  const mutant = fs.readFileSync('src/engine.mjs', 'utf8') + '\nconst sneaky = Math.random();\n';
-  assert(stripCommentsAndStrings(mutant).includes('Math.random'), 'mutation did not land');
+  const source = fs.readFileSync('src/engine.mjs', 'utf8');
+  for (const token of ['Math.random()', 'localStorage.getItem(k)', 'new AudioContext()']){
+    const mutant = source + '\nconst sneaky = ' + token + ';\n';
+    const stripped = stripCommentsAndStrings(mutant);
+    assert(IMPURE_TOKENS.some(t => stripped.includes(t)), 'mutation ' + token + ' did not land');
+  }
 });
 
 check('stripper-does-not-false-positive-on-comments', () => {
-  const stripped = stripCommentsAndStrings('/* Math.random */\nexport function step(){}');
-  assert(!stripped.includes('Math.random'), 'comment leaked through stripper');
+  const stripped = stripCommentsAndStrings('/* Math.random localStorage AudioContext */\nexport function step(){}');
+  for (const token of ['Math.random', 'localStorage', 'AudioContext']){
+    assert(!stripped.includes(token), token + ' leaked through stripper');
+  }
   assert(stripped.includes('export function step'), 'stripper ate real code');
+});
+
+check('storage-keys-are-registered-and-versioned', () => {
+  const keys = storageKeyLiterals(fs.readFileSync('src/main.mjs', 'utf8'));
+  assert(keys.length >= 2, 'expected at least two registered storage keys, got ' + keys.length);
+  eq(new Set(keys).size, keys.length, 'storage key uniqueness');
+  for (const key of keys) assert(/\.v\d+$/.test(key), 'key ' + key + ' has no version suffix');
+});
+
+check('every-storage-call-goes-through-the-registry', () => {
+  const source = fs.readFileSync('src/main.mjs', 'utf8');
+  const calls = storageCalls(source);
+  assert(calls.length >= 3, 'storage scanner found only ' + calls.length + ' calls, parser drifted');
+  const offenders = unregisteredStorageCalls(source);
+  eq(offenders.map(o => o.method + '(' + o.firstArg + ')').join(', '), '', 'unregistered storage calls');
+});
+
+/* 两侧都要有样本。合法那侧是上一轮真红过的地方：扫描器把 setItem 的两个
+ * 参数一起抓了，于是一个完全合法的调用被当成违规报了出来。 */
+check('storage-scanner-self-proof-legal-calls-are-seen-and-allowed', () => {
+  for (const sample of FIXTURES.legal){
+    eq(storageCalls(sample).length, 1, 'scanner did not see the legal call: ' + sample);
+    eq(unregisteredStorageCalls(sample).length, 0, 'legal call falsely reported: ' + sample);
+  }
+});
+
+check('storage-scanner-self-proof-illegal-calls-are-caught', () => {
+  for (const sample of FIXTURES.illegal){
+    eq(unregisteredStorageCalls(sample).length, 1, 'scanner missed a raw literal key: ' + sample);
+  }
 });
 
 check('workflow-set-equals-registry', () => {
@@ -421,8 +504,6 @@ check('rules-file-stays-under-200-lines', () => {
   assert(lines <= 200, 'AGENTS.md has ' + lines + ' lines');
 });
 
-/* 截图清单：目录集合 == README 引用集合，双向。新加一张忘了写进 README 会红，
- * 删一张而 README 还引着也会红。手写清单追不上目录，所以这里不存清单。 */
 function shotFiles(){
   return fs.readdirSync('docs/shots').filter(f => f.endsWith('.svg')).sort();
 }
@@ -430,8 +511,7 @@ function shotFiles(){
 check('readme-references-exactly-the-shot-set', () => {
   const readme = fs.readFileSync('README.md', 'utf8');
   const referenced = [...readme.matchAll(/docs\/shots\/([A-Za-z0-9._-]+\.svg)/g)].map(m => m[1]);
-  const unique = [...new Set(referenced)].sort();
-  eq(JSON.stringify(unique), JSON.stringify(shotFiles()), 'README shot set');
+  eq(JSON.stringify([...new Set(referenced)].sort()), JSON.stringify(shotFiles()), 'README shot set');
 });
 
 check('shots-are-non-empty-and-distinct', () => {
@@ -446,8 +526,7 @@ check('shots-are-non-empty-and-distinct', () => {
 check('shots-declare-engine-canvas-size', () => {
   const want = 'viewBox="0 0 ' + CONFIG.WORLD_W + ' ' + CONFIG.WORLD_H + '"';
   for (const f of shotFiles()){
-    const body = fs.readFileSync(path.join('docs/shots', f), 'utf8');
-    assert(body.includes(want), f + ' does not declare ' + want);
+    assert(fs.readFileSync(path.join('docs/shots', f), 'utf8').includes(want), f + ' does not declare ' + want);
   }
 });
 
@@ -467,6 +546,19 @@ check('readme-documents-install-and-verify-commands', () => {
   assert(readme.includes('npm install'), 'README does not document npm install');
 });
 
+check('readme-documents-features-that-exist-in-code', () => {
+  const readme = fs.readFileSync('README.md', 'utf8');
+  const main = fs.readFileSync('src/main.mjs', 'utf8');
+  const keys = storageKeyLiterals(main);
+  if (keys.some(k => k.includes('best'))){
+    assert(readme.includes('\u6700\u9ad8\u5206'), 'README never mentions the best score');
+  }
+  if (keys.some(k => k.includes('muted'))){
+    assert(readme.includes('\u58f0\u97f3'), 'README never mentions the sound toggle');
+  }
+  if (main.includes('KeyM')) assert(/\bM\b/.test(readme), 'README never documents the M shortcut');
+});
+
 check('obligations-are-live-and-not-overdue', () => {
   const now = new Date();
   const items = JSON.parse(fs.readFileSync('docs/OBLIGATIONS.json', 'utf8'));
@@ -481,8 +573,7 @@ check('obligations-are-live-and-not-overdue', () => {
 });
 
 check('obligation-checker-mutation-proves-itself', () => {
-  const stale = { status: 'pending', due: '2020-01-01' };
-  assert(!(new Date(stale.due + 'T23:59:59+08:00') >= new Date()), 'overdue check is decorative');
+  assert(!(new Date('2020-01-01T23:59:59+08:00') >= new Date()), 'overdue check is decorative');
 });
 
 check('secret-shape-scan', () => {
@@ -510,6 +601,15 @@ check('renderer-imports-pipe-geometry', () => {
   const source = fs.readFileSync('src/render.mjs', 'utf8');
   assert(source.includes('pipeGeometry'), 'renderer must use pipeGeometry');
   assert(!/PIPE_GAP\s*\//.test(stripCommentsAndStrings(source)), 'renderer recomputes gap math');
+});
+
+check('renderer-reads-card-baselines-from-config', () => {
+  const stripped = stripCommentsAndStrings(fs.readFileSync('src/render.mjs', 'utf8'));
+  const deadFn = stripped.slice(stripped.indexOf('export function drawDead'), stripped.indexOf('function card('));
+  assert(deadFn.length > 200, 'drawDead slice too small, parser drifted');
+  assert(deadFn.includes('CONFIG.DEAD_LINES'), 'drawDead must read CONFIG.DEAD_LINES');
+  const baselineLiterals = [...deadFn.matchAll(/,\s*(\d{3})\s*\)/g)].map(m => m[1]);
+  eq(baselineLiterals.join(','), '', 'drawDead still has hardcoded baseline literals');
 });
 
 check('renderer-uses-flat-rects-for-pipes', () => {
