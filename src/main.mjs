@@ -22,6 +22,29 @@ function paint(){
   phaseNode.textContent = state.phase;
 }
 
+function pause(){
+  paused = true;
+  if (raf) cancelAnimationFrame(raf);
+  raf = null;
+}
+
+function resume(){
+  if (!paused) return;
+  paused = false;
+  lastTick = 0;
+  raf = requestAnimationFrame(loop);
+}
+
+function loop(ts){
+  if (!lastTick) lastTick = ts;
+  if (ts - lastTick >= 1000 / 60){
+    lastTick = ts;
+    state = step(state, bot ? botInput(state) : { flap: false });
+    paint();
+  }
+  if (!paused) raf = requestAnimationFrame(loop);
+}
+
 function reset(seed = 7){
   state = createState(seed);
   paint();
@@ -33,35 +56,10 @@ function feed(input){
   return snapshot(state);
 }
 
-function loop(ts){
-  if (!lastTick) lastTick = ts;
-  const dt = ts - lastTick;
-  if (dt >= 1000 / 60){
-    lastTick = ts;
-    const input = bot ? botInput(state) : { flap: false };
-    state = step(state, input);
-    paint();
-  }
-  if (!paused) raf = requestAnimationFrame(loop);
-}
-
-function resume(){
-  if (!paused) return;
-  paused = false;
-  lastTick = 0;
-  raf = requestAnimationFrame(loop);
-}
-
-function pause(){
-  paused = true;
-  if (raf) cancelAnimationFrame(raf);
-  raf = null;
-}
-
 function flap(){
   if (state.phase === 'dead'){
-    reset(7);
-    return feed({ flap: false });
+    reset(state.seed);
+    return snapshot(state);
   }
   return feed({ flap: true });
 }
@@ -71,12 +69,19 @@ window.addEventListener('keydown', ev => {
   ev.preventDefault();
   flap();
 });
+canvas.addEventListener('pointerdown', ev => {
+  ev.preventDefault();
+  flap();
+});
 
 paint();
 raf = requestAnimationFrame(loop);
 
-function countColors(hexList){
-  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+function countColorsInBand(hexList, y0, y1){
+  const top = Math.max(0, Math.min(canvas.height, y0));
+  const bottom = Math.max(top, Math.min(canvas.height, y1));
+  if (bottom === top) return 0;
+  const data = ctx.getImageData(0, top, canvas.width, bottom - top).data;
   const targets = new Set(hexList.map(hex => {
     const n = Number.parseInt(hex.slice(1), 16);
     return [n >> 16, (n >> 8) & 255, n & 255].join(',');
@@ -88,6 +93,8 @@ function countColors(hexList){
   return count;
 }
 
+/* 缺字体的时候汉字会全退化成同一个方块。判断方法不是去猜方块长什么样，
+ * 而是拿私用区的一个码位做基准,任何字体都没有它，它必然是方块。 */
 function glyphSignature(text){
   const off = document.createElement('canvas');
   off.width = 96;
@@ -102,13 +109,44 @@ function glyphSignature(text){
   c.fillText(text, off.width / 2, off.height / 2 + 2);
   const d = c.getImageData(0, 0, off.width, off.height).data;
   let h = 2166136261;
-  for (let i = 0; i < d.length; i += 4){
-    h ^= d[i]; h = Math.imul(h, 16777619) >>> 0;
-    h ^= d[i + 1]; h = Math.imul(h, 16777619) >>> 0;
-    h ^= d[i + 2]; h = Math.imul(h, 16777619) >>> 0;
-    h ^= d[i + 3]; h = Math.imul(h, 16777619) >>> 0;
+  for (let i = 0; i < d.length; i += 1){
+    h ^= d[i];
+    h = Math.imul(h, 16777619) >>> 0;
   }
   return h.toString(16).padStart(8, '0');
+}
+
+/* 确定性截图用的推进器。不靠 rAF，所以同一个种子每次跑出来的画面一模一样。
+ * 停在「管道水平方向不碰到鸟」的那一帧，不是硕死一个帧数,否则鸟会遮住管体
+ * 像素，而那一笔算不进期望值里。 */
+function runToShotFrame(seed, minFrames){
+  reset(seed);
+  pause();
+  state = step(state, { flap: true });
+  for (let guard = 0; guard < 1500; guard += 1){
+    state = step(state, botInput(state));
+    if (state.phase !== 'playing') break;
+    if (state.frame < minFrames) continue;
+    const clear = state.pipes.every(p => {
+      const x = Math.round(p.x);
+      return x + CONFIG.PIPE_W < CONFIG.BIRD_X - CONFIG.BIRD_R - 2 ||
+             x > CONFIG.BIRD_X + CONFIG.BIRD_R + 2;
+    });
+    if (clear) break;
+  }
+  paint();
+  return snapshot(state);
+}
+
+function runToDeath(seed){
+  reset(seed);
+  pause();
+  state = step(state, { flap: true });
+  for (let guard = 0; guard < 1500 && state.phase === 'playing'; guard += 1){
+    state = step(state, { flap: false });
+  }
+  paint();
+  return snapshot(state);
 }
 
 window.__FLAPPY = {
@@ -116,11 +154,14 @@ window.__FLAPPY = {
   colors: COLORS,
   reset,
   feed,
-  getState: () => structuredClone(state),
   snapshot: () => snapshot(state),
   renderNow: () => paint(),
   setPaused(flag){ if (flag) pause(); else resume(); },
+  isPaused: () => paused,
   setBot(flag){ bot = !!flag; },
-  countColors,
+  countColorsInBand,
   glyphSignature,
+  runToShotFrame,
+  runToDeath,
+  toPng: () => canvas.toDataURL('image/png'),
 };

@@ -6,9 +6,6 @@
  * 随机源。闸门里有一条扫描在守这件事，而且它先剥掉注释再扫,所以这段说明本身
  * 不会把它骗过去。
  *
- * 三个回报：同种子同输入必然同输出（闸门 eng-determinism）；一万八千步压测在
- * 毫秒级（eng 那条 perf）；同一份逻辑可以换任何外壳,canvas、终端、服务端重放。
- *
  * 契约：step(state, input) 返回**新**状态，绝不改入参。
  * ======================================================================== */
 
@@ -28,23 +25,31 @@ export const CONFIG = {
   GAP_MARGIN: 124,
   CAP_H: 26,
   CAP_OVERHANG: 5,
+
+  /* 两根相邻管道缝隙中心最大可能的高差。它必须等于 gapRange().span,
+   * 有一条等号断言把两头钉在一起，改 GAP_MARGIN 而不重算这个数就会红。
+   * 另一条断言要求机器人在两管之间真的爬得上这么多,那一条量的是行为，
+   * 不是拄计划值做乘法。 */
+  MAX_GAP_DELTA: 320,
+
+  /* 弹窗与 HUD 的几何。浏览器闸门的像素等号只数 SHOT_BAND 这一条横带，
+   * 而那条横带必须落在弹窗下沿之下、地面之上。这三组参数是耦合的，
+   * 有断言在守，变异体证明过它会红。 */
+  CARD: { cy: 198, w: 306, hReady: 126, hDead: 172 },
+  HUD_BASELINE: 66,
+  SHOT_BAND: { y0: 300, y1: 560 },
 };
 
-/* 地面那条线。管体的下半段正好画到它，所以渲染层画地面不会盖住管体像素,
- * 浏览器闸门的像素等号断言依赖这一点。 */
 export function playFloor(){
   return CONFIG.WORLD_H - CONFIG.GROUND_H;
 }
 
-/* 缝隙中心的取值区间。上下都留 GAP_MARGIN，保证管体两段都比管口那一段高,
- * 这是像素等号断言成立的前提，闸门 coupling-cap-inside-body 在守。 */
 export function gapRange(){
   const lo = CONFIG.GAP_MARGIN;
   const hi = playFloor() - CONFIG.GAP_MARGIN;
   return { lo, hi, span: hi - lo };
 }
 
-/* 确定性随机源：种子进，序列出。 */
 function nextRand(seedState){
   let t = (seedState + 0x6D2B79F5) | 0;
   t = Math.imul(t ^ (t >>> 15), 1 | t);
@@ -89,7 +94,6 @@ export function collide(bird, pipes){
   return null;
 }
 
-/* 还没被越过的最近那根管道。机器人和 HUD 都用它。 */
 export function nextPipe(state){
   let best = null;
   for (const p of state.pipes){
@@ -198,7 +202,6 @@ export function snapshot(state){
   };
 }
 
-/* 状态摘要。确定性断言比的是它,不是逐字段人工对比。 */
 export function digest(state){
   const json = JSON.stringify(state);
   let h = 0x811c9dc5;

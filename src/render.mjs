@@ -1,6 +1,10 @@
 import { CONFIG, pipeGeometry, playFloor } from './engine.mjs';
 import { COLORS } from './palette.mjs';
 
+/* 管道故意只用**整数坐标的平色矩形**：不描边、不渐变、不反锥齿。
+ * 上一版给管体描了一圈 2px 边，而描边会吃掉一部分 body 像素,
+ * 那会把浏览器闸门那条像素等号断言逗成一笔算不清的账。
+ * 要加装饰层的话，先把它的面积算进期望值里。 */
 export function drawBackground(ctx){
   ctx.fillStyle = COLORS.sky;
   ctx.fillRect(0, 0, CONFIG.WORLD_W, CONFIG.WORLD_H);
@@ -28,40 +32,28 @@ function cloud(ctx, x, y, size){
   ctx.fill();
 }
 
-/* 画法故意只用整数矩形，不上渐变、不过描边叠到 body 上。
- * 浏览器闸门的像素等号就是在吃这份几何。 */
 export function drawPipes(ctx, state){
   for (const pipe of state.pipes){
     const x = Math.round(pipe.x);
     const g = pipeGeometry(pipe);
-    const bodyW = CONFIG.PIPE_W;
-    const capW = CONFIG.PIPE_W + CONFIG.CAP_OVERHANG * 2;
     const capX = x - CONFIG.CAP_OVERHANG;
+    const capW = CONFIG.PIPE_W + CONFIG.CAP_OVERHANG * 2;
 
     ctx.fillStyle = COLORS.pipeBody;
-    if (g.topH > CONFIG.CAP_H){
-      ctx.fillRect(x, 0, bodyW, g.topH - CONFIG.CAP_H);
-    }
+    if (g.topH > CONFIG.CAP_H) ctx.fillRect(x, 0, CONFIG.PIPE_W, g.topH - CONFIG.CAP_H);
     if (g.bottomH > CONFIG.CAP_H){
-      ctx.fillRect(x, g.bottomY + CONFIG.CAP_H, bodyW, g.bottomH - CONFIG.CAP_H);
+      ctx.fillRect(x, g.bottomY + CONFIG.CAP_H, CONFIG.PIPE_W, g.bottomH - CONFIG.CAP_H);
     }
 
     ctx.fillStyle = COLORS.pipeCap;
     ctx.fillRect(capX, g.topH - CONFIG.CAP_H, capW, CONFIG.CAP_H);
     ctx.fillRect(capX, g.bottomY, capW, CONFIG.CAP_H);
-
-    ctx.strokeStyle = COLORS.pipeStroke;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x + 1, 1, bodyW - 2, Math.max(0, g.topH - CONFIG.CAP_H - 2));
-    ctx.strokeRect(x + 1, g.bottomY + CONFIG.CAP_H + 1, bodyW - 2, Math.max(0, g.bottomH - CONFIG.CAP_H - 2));
   }
 }
 
 export function drawBird(ctx, state){
-  const x = CONFIG.BIRD_X;
-  const y = state.bird.y;
   ctx.save();
-  ctx.translate(x, y);
+  ctx.translate(CONFIG.BIRD_X, state.bird.y);
   ctx.rotate(Math.max(-0.45, Math.min(0.65, state.bird.vy / 13)));
   ctx.fillStyle = COLORS.birdBody;
   ctx.beginPath();
@@ -93,45 +85,48 @@ export function drawBird(ctx, state){
 }
 
 export function drawHud(ctx, state){
-  const scoreText = String(state.score);
+  const text = String(state.score);
   ctx.font = 'bold 40px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.lineJoin = 'round';
   ctx.lineWidth = 8;
   ctx.strokeStyle = COLORS.scoreShadow;
-  ctx.strokeText(scoreText, CONFIG.WORLD_W / 2, 66);
+  ctx.strokeText(text, CONFIG.WORLD_W / 2, CONFIG.HUD_BASELINE);
   ctx.fillStyle = COLORS.score;
-  ctx.fillText(scoreText, CONFIG.WORLD_W / 2, 66);
+  ctx.fillText(text, CONFIG.WORLD_W / 2, CONFIG.HUD_BASELINE);
 }
 
 export function drawReady(ctx){
-  card(ctx, CONFIG.WORLD_W / 2, 198, 306, 126);
+  card(ctx, CONFIG.CARD.hReady);
   ctx.fillStyle = COLORS.ink;
   ctx.textAlign = 'center';
   ctx.font = 'bold 30px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-  ctx.fillText('FLAPPYCAT', CONFIG.WORLD_W / 2, 190);
+  ctx.fillText('FLAPPYCAT', CONFIG.WORLD_W / 2, 176);
   ctx.font = '18px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-  ctx.fillText('按 Space 起飞', CONFIG.WORLD_W / 2, 224);
-  ctx.fillText('穿过管道，别摔死', CONFIG.WORLD_W / 2, 252);
+  ctx.fillText('按 Space 起飞', CONFIG.WORLD_W / 2, 212);
+  ctx.fillText('穿过管道，别摔死', CONFIG.WORLD_W / 2, 240);
 }
 
 export function drawDead(ctx, state){
-  card(ctx, CONFIG.WORLD_W / 2, 198, 306, 152);
+  card(ctx, CONFIG.CARD.hDead);
   ctx.fillStyle = COLORS.ink;
   ctx.textAlign = 'center';
   ctx.font = 'bold 28px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-  ctx.fillText('Game Over', CONFIG.WORLD_W / 2, 184);
+  ctx.fillText('Game Over', CONFIG.WORLD_W / 2, 158);
   ctx.font = '18px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
-  ctx.fillText('得分 ' + state.score, CONFIG.WORLD_W / 2, 220);
-  ctx.fillText(state.deathCause === 'pipe' ? '你撞管道了' : '你砸地上了', CONFIG.WORLD_W / 2, 248);
-  ctx.fillText('按 Space 再来一局', CONFIG.WORLD_W / 2, 280);
+  ctx.fillText('得分 ' + state.score, CONFIG.WORLD_W / 2, 198);
+  ctx.fillText(state.deathCause === 'pipe' ? '你撞管道了' : '你砸到地上了', CONFIG.WORLD_W / 2, 226);
+  ctx.fillText('按 Space 再来一局', CONFIG.WORLD_W / 2, 258);
 }
 
-function card(ctx, cx, cy, w, h){
+function card(ctx, h){
+  const w = CONFIG.CARD.w;
+  const x = CONFIG.WORLD_W / 2 - w / 2;
+  const y = CONFIG.CARD.cy - h / 2;
   ctx.fillStyle = COLORS.panel;
   ctx.strokeStyle = COLORS.panelBorder;
   ctx.lineWidth = 4;
-  roundRect(ctx, cx - w / 2, cy - h / 2, w, h, 16);
+  roundRect(ctx, x, y, w, h, 16);
   ctx.fill();
   ctx.stroke();
 }
