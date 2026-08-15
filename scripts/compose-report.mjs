@@ -70,15 +70,24 @@ function engSection(data){
 
 function webSection(data){
   const m = data.metrics || {};
+  const audio = m.audio || {};
   return [
     '### ' + (data.failures.length ? '❌' : '✅') + ' 浏览器闸门 - ' + data.passed + '/' + data.total,
     '',
     '- 画布: ' + m.canvas,
-    '- 机器人分数: ' + m.botScore + '，跳跃 ' + m.botJumps,
+    '- 浏览器跑到帧 ' + m.botFrames + '：分数 ' + m.botScore +
+      '，纯引擎同帧数 ' + m.engineScoreSameFrames + '（这两个必须相等）',
     '- 管体像素: 实际 ' + m.pipePixels + '，期望 ' + m.expectedPipePixels,
     '- 管口像素: 实际 ' + m.capPixels + '，期望 ' + m.expectedCapPixels,
-    '- 帧率: ' + m.fps,
-    '- 截图: ' + (m.shots || []).map(s => s.name + ' ' + s.bytes + 'B ' + s.sha.slice(0, 8)).join(' · '),
+    '- 弹窗横带像素: 实际 ' + m.deadStripPixels + '，期望 ' + m.expectedDeadStripPixels,
+    '- 字体度量（实测）: 标题上伸 ' + m.titleAscent + '，正文下伸 ' + m.bodyDescent,
+    '- 帧率: ' + m.fps + '（下限 ' + m.fpsFloor + '，实测基线 ' + m.fpsBaseline + '）',
+    '- 最高分: 跑出 ' + m.bestRunScore + '，重载后 ' + m.bestAfterReload +
+      '（存储降级: ' + (m.storageDegraded ? '是' : '否') + '）',
+    '- 声音: 开着启动 ' + m.audioStartsUnmuted + ' 个节点，关了新增 ' + m.audioStartsMuted +
+      '（失败 ' + audio.failures + '，上下文状态 ' + audio.contextState + '）',
+    '- 截图: ' + (m.shots || []).map(s => s.name + ' ' + s.bytes + 'B png ' + s.sha.slice(0, 8) +
+      ' canvas ' + s.canvasSha).join(' · '),
     '',
   ].join('\n');
 }

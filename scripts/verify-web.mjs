@@ -1,23 +1,22 @@
 #!/usr/bin/env node
 /* ===========================================================================
- * 浏览器闸门。真起页面、真敲键、真数像素。
+ * 浏览器闸门。真起页面、真敲键、真数像素、真重载。
  * ===========================================================================
  *
  * 两个“拍的数”已经没了，处理方式故意不同：
  *
- * 1. **机器人得分不再是下限，是等号。** 之前写 `score >= 5`，而它等到 5 就停，
- *    于是实测值永远恰好等于下限，那个数字什么也没告诉你。现在跑到固定帧数，
- *    然后拿**同一份纯引擎在 Node 里跑同样帧数**做尺子，断言分数逐字相等。
- *    猜的数因此不是“收紧”了，是消失了。
+ * 1. **机器人得分不再是下限，是等号。** 之前写 score >= 5，而它等到 5 就停，
+ *    于是实测值永远恰好等于下限，那个数字什么也告诉不了你。现在跑到固定帧数，
+ *    然后拿**同一份纯引擎在 Node 里跑同样帧数**做尺子，断言逐字相等。
+ * 2. **帧率下限反而改松了。** 它只该抓彻底卡死，不是性能基准。紧到正常波动
+ *    就会撞的下限是一台假红工厂，而假红会逗人去改产品迁就尺子。
  *
- * 2. **帧率下限反而改松了。** 它只该抓“彻底卡死 / 白屏 / 死循环”，不是性能基准。
- *    实测 40-42，而原来写 20,只有两倍余量，CI 上共享 CPU 拖一下就会假红，
- *    而假红会逗人去改产品迁就尺子。现在 13，三倍余量，并且另配一条断言
- *    守住“有人把它收得太紧”,两条判词不同，两侧都会红。
+ * 最高分与声音这两块的断言设计：
  *
- * 还有一个**探针**：shot-play 的 sha 连两轮完全不变，而 ready / dead 那两张在拖。
- * 根因还没定案，所以这一轮不编原因，只把能分辨它的两个数报出来：
- * canvas 自己的像素哈希（不含 CSS 合成与 PNG 编码）和三个字形签名。
+ * - 最高分验的是**真的重载页面**之后还在。读一下内存里的变量证明不了持久化,
+ *   而持久化正是这个功能的全部内容。另外先拿分再死，否则得到的是一条 0 == 0。
+ * - 声音验的是“真的创建并启动了音源节点”，**不是“能听到”**,后者 CI 验不了，
+ *   已经写进 README 的“测不出来的”。两个方向都要红：开着必须增加，关了必须一个不增。
  * ======================================================================== */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,12 +25,12 @@ import { chromium } from 'playwright';
 import { CONFIG, botInput, createState, step } from '../src/engine.mjs';
 import { startServer } from './serve.mjs';
 
-/* 只抓彻底卡死。实测基线是 run acc56bc 上的 40（上一轮 42）。 */
 const FPS_FLOOR = 13;
-const FPS_MEASURED_BASELINE = 40;
+const FPS_MEASURED_BASELINE = 38;
 const BOT_FRAMES = 720;
 const SHOT_SEED = 7;
 const SHOT_MIN_FRAMES = 300;
+const BEST_TARGET_SCORE = 3;
 
 const artifactsDir = path.resolve('artifacts');
 fs.mkdirSync(artifactsDir, { recursive: true });
@@ -78,6 +77,12 @@ function expectedBandPixels(snap){
   return { body, cap };
 }
 
+async function boot(page, url){
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => !!window.__FLAPPY, null, { timeout: 15000 });
+  await page.bringToFront();
+}
+
 async function shoot(page, name){
   const canvasSha = await page.evaluate(() => window.__FLAPPY.canvasHash());
   const buffer = await page.locator('#game').screenshot({ type: 'png' });
@@ -93,16 +98,15 @@ async function shoot(page, name){
 const server = await startServer('.', 0);
 const browser = await chromium.launch({
   headless: true,
-  args: ['--disable-background-timer-throttling', '--disable-renderer-backgrounding'],
+  args: ['--disable-background-timer-throttling', '--disable-renderer-backgrounding',
+         '--autoplay-policy=no-user-gesture-required'],
 });
-const page = await browser.newPage({ viewport: { width: 900, height: 1000 } });
+const page = await browser.newPage({ viewport: { width: 900, height: 1040 } });
 const consoleErrors = [];
 page.on('console', msg => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
 page.on('pageerror', err => consoleErrors.push(String(err)));
 
-await page.goto(server.url, { waitUntil: 'domcontentloaded' });
-await page.waitForFunction(() => !!window.__FLAPPY, null, { timeout: 15000 });
-await page.bringToFront();
+await boot(page, server.url);
 
 await check('page-boots-without-console-errors', async () => {
   eq(consoleErrors.join(' | '), '', 'console errors');
@@ -126,8 +130,158 @@ await check('cjk-renders-differently-from-guaranteed-tofu', async () => {
   assert(sig.latin !== sig.tofu, 'latin digit collapsed into tofu');
 });
 
-/* 同一个状态重画两次必须逐像素相等。这条把“渲染本身不确定”从候选名单里划掉，
- * 让漂动的嘲疑范围缩到“跑与跑之间的环境差异”。 */
+await check('local-storage-is-actually-available', async () => {
+  const degraded = await page.evaluate(() => window.__FLAPPY.storageDegraded());
+  metrics.storageDegraded = degraded;
+  assert(!degraded, 'storage already degraded to memory, every persistence assertion below would be vacuous');
+});
+
+/* ---------------------------------------------------------------------------
+ * 最高分持久化
+ * ------------------------------------------------------------------------ */
+
+await check('fresh-storage-means-zero-best', async () => {
+  await page.evaluate(() => window.__FLAPPY.wipeStorage());
+  await boot(page, server.url);
+  eq(await page.evaluate(() => window.__FLAPPY.getBest()), 0, 'best on fresh storage');
+  eq(await page.evaluate(() => document.getElementById('best-value').textContent), '0', 'best pill');
+});
+
+await check('best-score-survives-a-real-page-reload', async () => {
+  const scored = await page.evaluate(target => {
+    window.__FLAPPY.setPaused(true);
+    const snap = window.__FLAPPY.runToDeathAfterScoring(7, target);
+    return { snap, best: window.__FLAPPY.getBest() };
+  }, BEST_TARGET_SCORE);
+
+  metrics.bestRunScore = scored.snap.score;
+  eq(scored.snap.phase, 'dead', 'phase after the scoring run');
+  assert(scored.snap.score >= BEST_TARGET_SCORE,
+    'fixture only reached ' + scored.snap.score + ', a zero score would make this assertion vacuous');
+  eq(scored.best, scored.snap.score, 'best right after dying');
+
+  await boot(page, server.url);
+  const afterReload = await page.evaluate(() => ({
+    best: window.__FLAPPY.getBest(),
+    pill: document.getElementById('best-value').textContent,
+    phase: window.__FLAPPY.snapshot().phase,
+    score: window.__FLAPPY.snapshot().score,
+  }));
+  metrics.bestAfterReload = afterReload.best;
+  eq(afterReload.best, scored.snap.score, 'best after reload');
+  eq(Number(afterReload.pill), scored.snap.score, 'best pill after reload');
+  eq(afterReload.phase, 'ready', 'a reload should start a fresh round');
+  eq(afterReload.score, 0, 'current score after reload');
+});
+
+await check('a-worse-run-does-not-lower-the-best', async () => {
+  const before = await page.evaluate(() => window.__FLAPPY.getBest());
+  assert(before > 0, 'nothing to protect, previous assertion did not leave a best score');
+  const after = await page.evaluate(() => {
+    window.__FLAPPY.setPaused(true);
+    const snap = window.__FLAPPY.runToDeath(7);
+    return { score: snap.score, best: window.__FLAPPY.getBest() };
+  });
+  assert(after.score < before, 'the fixture run scored ' + after.score + ', not worse than ' + before);
+  eq(after.best, before, 'best after a worse run');
+});
+
+await check('hud-best-matches-the-stored-best', async () => {
+  const data = await page.evaluate(() => ({
+    best: window.__FLAPPY.getBest(),
+    pill: document.getElementById('best-value').textContent,
+  }));
+  eq(Number(data.pill), data.best, 'best pill vs stored best');
+});
+
+/* ---------------------------------------------------------------------------
+ * 声音开关
+ * ------------------------------------------------------------------------ */
+
+await check('audio-context-exists-in-this-runner', async () => {
+  const audio = await page.evaluate(() => window.__FLAPPY.audio());
+  metrics.audio = audio;
+  assert(audio.hasContextClass,
+    'no AudioContext in this browser, so both sound assertions below would be vacuous');
+});
+
+await check('sound-on-really-starts-an-audio-node', async () => {
+  const result = await page.evaluate(() => {
+    window.__FLAPPY.setPaused(true);
+    window.__FLAPPY.setMuted(false);
+    window.__FLAPPY.reset(7);
+    const before = window.__FLAPPY.audio();
+    window.__FLAPPY.feed({ flap: true });
+    document.dispatchEvent(new Event('noop'));
+    const mid = window.__FLAPPY.audio();
+    return { before, mid };
+  });
+  // feed() 不发声，发声的是真正的按键路径，所以这里用真键盘事件。
+  await page.keyboard.press('Space');
+  const after = await page.evaluate(() => window.__FLAPPY.audio());
+  metrics.audioStartsUnmuted = after.starts;
+  eq(after.failures, 0, 'audio node failures while unmuted');
+  assert(after.starts > result.mid.starts,
+    'pressing Space with sound on started no audio node (starts stayed at ' + after.starts + ')');
+});
+
+await check('muting-starts-no-audio-node-at-all', async () => {
+  await page.evaluate(() => {
+    window.__FLAPPY.setPaused(true);
+    window.__FLAPPY.setMuted(true);
+    window.__FLAPPY.reset(7);
+  });
+  const before = await page.evaluate(() => window.__FLAPPY.audio());
+  await page.keyboard.press('Space');
+  await page.keyboard.press('Space');
+  const after = await page.evaluate(() => window.__FLAPPY.audio());
+  metrics.audioStartsMuted = after.starts - before.starts;
+  eq(after.starts, before.starts, 'audio nodes started while muted');
+  eq(after.failures, before.failures, 'muted path should not even try to build audio');
+});
+
+await check('sound-toggle-button-drives-and-reflects-the-state', async () => {
+  const states = await page.evaluate(() => {
+    window.__FLAPPY.setMuted(false);
+    const on = { muted: window.__FLAPPY.isMuted(), label: window.__FLAPPY.soundToggleLabel() };
+    const afterClick = window.__FLAPPY.clickSoundToggle();
+    const off = { muted: afterClick, label: window.__FLAPPY.soundToggleLabel() };
+    return { on, off };
+  });
+  eq(states.on.muted, false, 'muted flag with sound on');
+  eq(states.off.muted, true, 'muted flag after clicking the button');
+  assert(states.on.label !== states.off.label,
+    'the button label did not change, so it cannot tell the two states apart');
+});
+
+await check('mute-preference-survives-a-real-page-reload', async () => {
+  await page.evaluate(() => window.__FLAPPY.setMuted(true));
+  await boot(page, server.url);
+  const muted = await page.evaluate(() => ({
+    flag: window.__FLAPPY.isMuted(),
+    attr: document.getElementById('sound-toggle').dataset.muted,
+  }));
+  eq(muted.flag, true, 'muted flag after reload');
+  eq(muted.attr, '1', 'button data attribute after reload');
+
+  await page.evaluate(() => window.__FLAPPY.setMuted(false));
+  await boot(page, server.url);
+  const unmuted = await page.evaluate(() => ({
+    flag: window.__FLAPPY.isMuted(),
+    attr: document.getElementById('sound-toggle').dataset.muted,
+  }));
+  eq(unmuted.flag, false, 'unmuted flag after reload');
+  eq(unmuted.attr, '0', 'button data attribute after reload');
+});
+
+/* ---------------------------------------------------------------------------
+ * 画面与循环。从这里开始把存储抹干净并重载，让三张截图确定性地可重现
+ * （最高分会画在弹窗上，不抹的话它会跟着上面那几条断言的结果走）。
+ * ------------------------------------------------------------------------ */
+
+await page.evaluate(() => window.__FLAPPY.wipeStorage());
+await boot(page, server.url);
+
 await check('render-is-idempotent-for-the-same-state', async () => {
   const pair = await page.evaluate(() => {
     window.__FLAPPY.setPaused(true);
@@ -183,9 +337,6 @@ await check('real-loop-advances-above-fps-floor', async () => {
   assert(fps >= FPS_FLOOR, 'loop advanced only ' + fps + ' frames in 1s, page is effectively frozen');
 });
 
-/* 承重的那一条：浏览器里跑出来的分数必须逐字等于同一份纯引擎在 Node 里
- * 跑同样帧数的分数。尺子是独立的（另一个进程、另一个堆），而且它不只守分数：
- * 鸟的高度、存活管道数、相位都要对得上。 */
 await check('browser-run-equals-pure-engine-at-the-same-frame-count', async () => {
   await page.evaluate(() => {
     window.__FLAPPY.reset(7);
@@ -254,22 +405,36 @@ await check('death-card-geometry-is-exact', async () => {
     const snap = window.__FLAPPY.runToDeath(args.seed);
     const c = document.createElement('canvas').getContext('2d');
     c.font = 'bold 28px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
+    const title = c.measureText('Game Over');
+    c.font = '18px "Noto Sans CJK SC", "Noto Sans", system-ui, sans-serif';
+    const body = c.measureText('\u6700\u9ad8\u5206 0');
     return {
       snap,
-      ascent: c.measureText('Game Over').actualBoundingBoxAscent,
+      titleAscent: title.actualBoundingBoxAscent,
+      bodyDescent: body.actualBoundingBoxDescent,
+      bodyWidth: body.width,
       strip: window.__FLAPPY.countColorsInBand([window.__FLAPPY.colors.panel], args.strip.y0, args.strip.y1),
     };
   }, { strip: CONFIG.DEAD_STRIP, seed: SHOT_SEED });
 
   const expected = (CONFIG.DEAD_STRIP.y1 - CONFIG.DEAD_STRIP.y0) * CONFIG.CARD_INNER_W;
+  const cardBottom = CONFIG.CARD.cy + CONFIG.CARD.hDead / 2;
+  const lastLine = CONFIG.DEAD_LINES[CONFIG.DEAD_LINES.length - 1];
   metrics.deadStripPixels = data.strip;
   metrics.expectedDeadStripPixels = expected;
   metrics.deadCause = data.snap.deathCause;
+  metrics.titleAscent = Number(data.titleAscent.toFixed(1));
+  metrics.bodyDescent = Number(data.bodyDescent.toFixed(1));
 
   eq(data.snap.phase, 'dead', 'phase');
   assert(data.snap.deathCause === 'pipe' || data.snap.deathCause === 'ground', 'missing death cause');
-  assert(CONFIG.DEAD_STRIP.y1 <= CONFIG.DEAD_TITLE_BASELINE - data.ascent,
-    'strip overlaps the title, measured ascent ' + data.ascent.toFixed(1));
+  assert(CONFIG.DEAD_STRIP.y1 <= CONFIG.DEAD_LINES[0] - data.titleAscent,
+    'strip overlaps the title, measured ascent ' + data.titleAscent.toFixed(1));
+  assert(lastLine + data.bodyDescent <= cardBottom,
+    'the last line descends past the card bottom: ' + (lastLine + data.bodyDescent).toFixed(1) +
+    ' > ' + cardBottom + ' (measured descent ' + data.bodyDescent.toFixed(1) + ')');
+  assert(data.bodyWidth < CONFIG.CARD_INNER_W,
+    'the best-score line is wider than the card: ' + data.bodyWidth.toFixed(1));
   eq(data.strip, expected, 'death card panel strip pixels');
 });
 
