@@ -8,7 +8,8 @@
     "verify": "node scripts/verify.mjs",
     "verify:web": "node scripts/verify-web.mjs",
     "serve": "node scripts/serve.mjs",
-    "report": "node scripts/compose-report.mjs reports"
+    "report": "node scripts/compose-report.mjs reports",
+    "heartbeat": "node scripts/write-heartbeat.mjs"
   },
   "devDependencies": {
     "playwright": "^1.47.0"
