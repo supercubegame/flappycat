@@ -4,6 +4,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { CONFIG, bestOf, botInput, createState, digest, gapRange, pipeGeometry, playFloor, sanitizeScore, snapshot, step } from '../src/engine.mjs';
 import { FIXTURES, storageCalls, storageKeyLiterals, stripCommentsAndStrings, unregisteredStorageCalls } from './storage-scan.mjs';
+import { HEARTBEAT_FILE, HEARTBEAT_GRACE_DAYS, MAX_HEARTBEAT_AGE_DAYS, cadenceDays, cronMinute, cronsFromWorkflow, expectedMaxAgeDays, heartbeatIsHealthy, heartbeatStatus, heartbeatWriteGuard } from './heartbeat.mjs';
 
 const failures = [];
 let passed = 0;
@@ -11,6 +12,7 @@ let mutationChecks = 0;
 let mutationKilled = 0;
 const artifactsDir = path.resolve('artifacts');
 fs.mkdirSync(artifactsDir, { recursive: true });
+const VERIFY_YML = '.github/workflows/verify.yml';
 
 function check(name, fn){
   const isMutation = /mutation|proves-itself|self-proof/.test(name);
@@ -149,6 +151,7 @@ check('config-numbers-are-finite', () => {
   finite(CONFIG.CARD_INNER_W, 'CARD_INNER_W');
   finite(CONFIG.SHOT_BAND.y0, 'SHOT_BAND.y0');
   finite(CONFIG.DEAD_STRIP.y1, 'DEAD_STRIP.y1');
+  finite(MAX_HEARTBEAT_AGE_DAYS, 'MAX_HEARTBEAT_AGE_DAYS');
   for (const [i, y] of CONFIG.DEAD_LINES.entries()) finite(y, 'DEAD_LINES[' + i + ']');
   for (const [i, y] of CONFIG.READY_LINES.entries()) finite(y, 'READY_LINES[' + i + ']');
 });
@@ -440,8 +443,6 @@ check('every-storage-call-goes-through-the-registry', () => {
   eq(offenders.map(o => o.method + '(' + o.firstArg + ')').join(', '), '', 'unregistered storage calls');
 });
 
-/* 两侧都要有样本。合法那侧是上一轮真红过的地方：扫描器把 setItem 的两个
- * 参数一起抓了，于是一个完全合法的调用被当成违规报了出来。 */
 check('storage-scanner-self-proof-legal-calls-are-seen-and-allowed', () => {
   for (const sample of FIXTURES.legal){
     eq(storageCalls(sample).length, 1, 'scanner did not see the legal call: ' + sample);
@@ -469,20 +470,20 @@ check('workflow-registry-mutation-proves-itself', () => {
 });
 
 check('tee-blocks-have-pipefail', () => {
-  const yaml = fs.readFileSync('.github/workflows/verify.yml', 'utf8');
+  const yaml = fs.readFileSync(VERIFY_YML, 'utf8');
   eq(parseRunBlocks(yaml).filter(b => b.includes('| tee')).length, 2, 'tee block count');
   eq(teeBlocksMissingPipefail(yaml).length, 0, 'blocks missing pipefail');
 });
 
 check('pipefail-scanner-mutation-proves-itself', () => {
-  const yaml = fs.readFileSync('.github/workflows/verify.yml', 'utf8');
+  const yaml = fs.readFileSync(VERIFY_YML, 'utf8');
   const mutant = yaml.split('set -o pipefail').join('');
   assert(mutant !== yaml, 'mutation did not land');
   eq(teeBlocksMissingPipefail(mutant).length, 2, 'scanner missed missing pipefail');
 });
 
 check('report-job-calls-shared-workflow', () => {
-  const yaml = fs.readFileSync('.github/workflows/verify.yml', 'utf8');
+  const yaml = fs.readFileSync(VERIFY_YML, 'utf8');
   assert(yaml.includes('uses: supercubegame/ci-workflows/.github/workflows/report.yml@main'), 'shared workflow missing');
   assert(yaml.includes('<!-- verify-gate -->'), 'marker drifted');
 });
@@ -491,8 +492,87 @@ check('compose-slugs-match-uploaded-artifacts', () => {
   const compose = fs.readFileSync('scripts/compose-report.mjs', 'utf8');
   const slugs = [...compose.matchAll(/slug: '([^']+)'/g)].map(m => m[1]).sort();
   eq(JSON.stringify(slugs), JSON.stringify(['eng', 'web']), 'compose slugs');
-  const yaml = fs.readFileSync('.github/workflows/verify.yml', 'utf8');
+  const yaml = fs.readFileSync(VERIFY_YML, 'utf8');
   for (const slug of slugs) assert(yaml.includes('stdout-' + slug + '.log'), 'stdout log missing for ' + slug);
+});
+
+/* ---------------------------------------------------------------------------
+ * 定时与心跳。四条正向 + 三个变异体。
+ *
+ * 注意这里有一条根本**不写**：“读配置确认 cron 还在”不能当成“定时还活着”的
+ * 证据,平台静默停用定时时，工作流文件一个字都不会变。所以配置只用来算
+ * 新鲜度上限与防自触发，“活着”那件事只能由带时间戳的痕迹回答。
+ * ------------------------------------------------------------------------ */
+
+check('schedule-exists-with-a-known-cadence-and-no-duplicates', () => {
+  const crons = cronsFromWorkflow(fs.readFileSync(VERIFY_YML, 'utf8'));
+  assert(crons.length >= 1, 'no cron at all, the scheduled gate does not exist');
+  eq(new Set(crons).size, crons.length, 'duplicate cron entries (they do not error, they just run twice)');
+  for (const cron of crons){
+    assert(cadenceDays(cron) !== null, 'cannot derive a cadence from cron "' + cron + '"');
+    assert(cronMinute(cron) !== 0, 'cron "' + cron + '" fires on the hour, which is the queueing peak');
+  }
+});
+
+check('coupling-heartbeat-age-equals-cron-cadence-plus-margin', () => {
+  const crons = cronsFromWorkflow(fs.readFileSync(VERIFY_YML, 'utf8'));
+  const expected = expectedMaxAgeDays(crons);
+  assert(expected !== null, 'cadence unknown, so the freshness cap would be a guessed number');
+  eq(MAX_HEARTBEAT_AGE_DAYS, expected, 'MAX_HEARTBEAT_AGE_DAYS');
+});
+
+check('cadence-coupling-mutation-catches-a-weekly-cron', () => {
+  const weekly = expectedMaxAgeDays(['17 3 * * 1']);
+  eq(weekly, 9, 'weekly cadence should derive a 9 day cap');
+  assert(weekly !== MAX_HEARTBEAT_AGE_DAYS,
+    'switching to a weekly cron would keep the same cap, so the equality is decorative');
+});
+
+check('heartbeat-write-is-guarded-by-event-identity-not-commit-message', () => {
+  const guard = heartbeatWriteGuard(fs.readFileSync(VERIFY_YML, 'utf8'));
+  assert(guard.ok, guard.reason);
+});
+
+check('heartbeat-guard-scanner-mutation-proves-itself', () => {
+  const yaml = fs.readFileSync(VERIFY_YML, 'utf8');
+  const noGuard = yaml.split("github.event_name == 'schedule'").join("always()");
+  assert(noGuard !== yaml, 'mutation did not land');
+  assert(!heartbeatWriteGuard(noGuard).ok, 'scanner accepted a heartbeat with no event guard');
+
+  const stringGuard = "    if: always() && github.event.head_commit.message != 'skip' && github.event_name == 'schedule' && workflow_dispatch";
+  assert(!heartbeatWriteGuard(stringGuard).ok, 'scanner accepted a commit-message based guard');
+});
+
+check('heartbeat-is-fresh-or-still-inside-the-first-run-grace', () => {
+  const hb = JSON.parse(fs.readFileSync(HEARTBEAT_FILE, 'utf8'));
+  const status = heartbeatStatus(hb, Date.now());
+  assert(heartbeatIsHealthy(status),
+    'heartbeat state is "' + status.state + '" at ' + status.ageDays + ' days' +
+    ' (last_scheduled_run=' + hb.last_scheduled_run + ', seeded_at=' + hb.seeded_at + ')' +
+    ' - never-ran means the cron never took effect, stale means the platform disabled it,' +
+    ' and a manual run is deliberately not allowed to revive either');
+});
+
+check('heartbeat-freshness-mutation-proves-itself', () => {
+  const now = Date.parse('2026-08-16T00:00:00Z');
+  eq(heartbeatStatus({ last_scheduled_run: '2026-08-15T03:17:00Z' }, now).state, 'fresh', 'yesterday');
+  eq(heartbeatStatus({ last_scheduled_run: '2026-08-01T03:17:00Z' }, now).state, 'stale', 'two weeks old');
+  eq(heartbeatStatus({ last_scheduled_run: null, seeded_at: '2026-08-15' }, now).state,
+    'awaiting-first-run', 'seeded yesterday');
+  eq(heartbeatStatus({ last_scheduled_run: null, seeded_at: '2026-07-01' }, now).state,
+    'never-ran', 'seeded long ago and never ran');
+  eq(heartbeatStatus({ last_scheduled_run: 'not a date' }, now).state, 'missing', 'garbage timestamp');
+  eq(heartbeatStatus(null, now).state, 'missing', 'no heartbeat file at all');
+  for (const state of ['stale', 'never-ran', 'missing']){
+    assert(!heartbeatIsHealthy({ state }), state + ' must not count as healthy');
+  }
+});
+
+check('manual-heartbeat-cannot-revive-a-dead-cron', () => {
+  const now = Date.parse('2026-09-01T00:00:00Z');
+  const hb = { last_scheduled_run: null, last_manual_run: '2026-09-01T00:00:00Z', seeded_at: '2026-08-16' };
+  eq(heartbeatStatus(hb, now).state, 'never-ran',
+    'a fresh manual stamp must not make the freshness check pass');
 });
 
 check('rules-files-match-byte-for-byte', () => {
@@ -557,6 +637,9 @@ check('readme-documents-features-that-exist-in-code', () => {
     assert(readme.includes('\u58f0\u97f3'), 'README never mentions the sound toggle');
   }
   if (main.includes('KeyM')) assert(/\bM\b/.test(readme), 'README never documents the M shortcut');
+  if (cronsFromWorkflow(fs.readFileSync(VERIFY_YML, 'utf8')).length){
+    assert(readme.includes('\u5fc3\u8df3'), 'there is a cron but README never mentions the heartbeat');
+  }
 });
 
 check('obligations-are-live-and-not-overdue', () => {
@@ -637,6 +720,24 @@ let perfState = createState(9);
   perfMs = Number((performance.now() - t0).toFixed(2));
 }
 
+const heartbeat = (() => {
+  try {
+    const hb = JSON.parse(fs.readFileSync(HEARTBEAT_FILE, 'utf8'));
+    const status = heartbeatStatus(hb, Date.now());
+    return {
+      state: status.state,
+      ageDays: status.ageDays,
+      lastScheduledRun: hb.last_scheduled_run,
+      lastManualRun: hb.last_manual_run,
+      maxAgeDays: MAX_HEARTBEAT_AGE_DAYS,
+      graceDays: HEARTBEAT_GRACE_DAYS,
+      crons: cronsFromWorkflow(fs.readFileSync(VERIFY_YML, 'utf8')),
+    };
+  } catch (error) {
+    return { state: 'missing', error: error.message };
+  }
+})();
+
 const sortedScores = [...seedScores].sort((a, b) => a - b);
 const metrics = {
   unitPass: passed,
@@ -651,6 +752,7 @@ const metrics = {
   rulesLines: fs.readFileSync('AGENTS.md', 'utf8').trimEnd().split('\n').length,
   mutantsKilled: mutationKilled,
   mutantsTotal: mutationChecks,
+  heartbeat,
 };
 
 const report = {

@@ -55,6 +55,7 @@ function missingSection(gate){
 
 function engSection(data){
   const m = data.metrics || {};
+  const hb = m.heartbeat || {};
   return [
     '### ' + (data.failures.length ? '❌' : '✅') + ' 引擎闸门 - ' + data.passed + '/' + data.total,
     '',
@@ -64,6 +65,9 @@ function engSection(data){
     '- 压测: ' + m.perfMs + ' ms / ' + m.perfFrames + ' steps',
     '- 规矩文件: ' + m.rulesLines + ' 行',
     '- 变异体: ' + m.mutantsKilled + '/' + m.mutantsTotal,
+    '- 心跳: `' + hb.state + '`，' + hb.ageDays + ' 天（上限 ' + hb.maxAgeDays +
+      '）· 定时 ' + JSON.stringify(hb.crons) + ' · 上次定时 ' + hb.lastScheduledRun +
+      ' · 上次手动 ' + hb.lastManualRun,
     '',
   ].join('\n');
 }
