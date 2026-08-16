@@ -22,5 +22,17 @@
       "path": "scripts/verify-web.mjs",
       "mustInclude": "sound-on-really-starts-an-audio-node"
     }
+  },
+  {
+    "id": "confirm-first-scheduled-run-really-happened",
+    "title": "确认定时闸门真的跑过一次，而不是只写了一行 cron",
+    "kind": "one-off",
+    "status": "pending",
+    "due": "2026-08-19",
+    "reason": "cron 刚加上，heartbeat.json 里的 last_scheduled_run 还是 null，也就是这条链从没被真的走过一次。写完就搂着的断言价值是零。到期前它应该自己变成一个时间戳,那时这条 mustInclude 会失配，闸门红着要求删掉本条义务。那就是它干完了活的信号。",
+    "criteria": {
+      "path": "heartbeat.json",
+      "mustInclude": "\"last_scheduled_run\": null"
+    }
   }
 ]

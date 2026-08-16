@@ -1,9 +1,24 @@
 name: verify
 
+# 只挂 push 曾经够用，现在不够：没人推代码的时候，上游（共享回写 workflow、
+# Playwright、runner 镜像）改了行为，而闸门仍然“全绿”,因为它压根没跑。
+# 外部结构漂移是时间驱动的，所以除了 push 还要挂定时。
+#
+# 分钟数故意不取整点（整点是平台排队高峰），有一条断言守着。
+# 频率故意取每天而不是每周：写得越勤，“读到的痕迹有多旧”就越不依赖两个定时
+# 之间的先后顺序,而那个顺序是个假设，平台定时经常延迟十几分钟。
+# cron 频率与新鲜度上限是一组耦合参数，有一条等号断言把两头钉在一起。
 on:
   push:
     branches: ['**']
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
+    inputs:
+      write_heartbeat:
+        description: 手动验一次心跳链路（写进 last_manual_run，不参与新鲜度判定）
+        type: boolean
+        default: false
 
 concurrency:
   group: verify-${{ github.ref }}
@@ -73,6 +88,62 @@ jobs:
       - name: 失败则让 job 失败
         if: steps.web.outcome != 'success'
         run: exit 1
+
+  # ==========================================================================
+  # 心跳。它存在的理由只有一个：平台会因为仓库长期不活跃**静默停用定时
+  # 工作流**，而那时工作流文件一个字都不会变,“读配置确认 cron 还在”这条
+  # 检查会在它本该抓住的那次失效上保持绿色。“没有坏消息”和“已经死了”
+  # 长得一模一样，带时间戳的正向痕迹不会。
+  #
+  # 三个设计点，每一个都有断言在守：
+  #
+  # 1. **always()**,闸门红也要盖戳。心跳回答的是“这条链还活着吗”，
+  #    不是“产品对不对”。两件事混在一起的话，一次真失败会伪装成一条死 cron。
+  # 2. **防自触发靠结构，不靠提交信息里的跳过标记。** 这一步只在 schedule
+  #    或显式手动请求时执行，它推出去的提交触发的是普通 push，那一次永远不写。
+  #    循环由构造终止，不依赖任何字符串,字符串守卫改一次模板就哑，
+  #    而哑掉的表现不是红。有一条扫描器断言这一行里不得出现提交信息。
+  # 3. **手动那条路写的是另一个字段。** 新鲜度只读 last_scheduled_run,
+  #    一次手动盖戳不得救活一条已经死掉的 cron。
+  # ==========================================================================
+  heartbeat:
+    name: 写心跳
+    needs: [gate, web]
+    if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.write_heartbeat))
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 盖戳
+        env:
+          EVENT: ${{ github.event_name }}
+          GATE_RESULT: ${{ needs.gate.result }}
+          WEB_RESULT: ${{ needs.web.result }}
+        run: node scripts/write-heartbeat.mjs
+
+      # 这里不能写 `git diff --cached --quiet && echo ... && exit 0`：开了 set -e 之后，
+      # diff 发现有改动时返回 1，整个 && 链的退出码就是 1，步骤反而失败。
+      - name: 推回主干
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add heartbeat.json
+          if git diff --cached --quiet; then
+            echo '心跳内容没变化，不造空提交'
+            exit 0
+          fi
+          git commit -m '心跳：定时闸门跑过了'
+          git push origin HEAD:main
 
   report:
     name: 回报结果
