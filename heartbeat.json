@@ -1,14 +1,14 @@
 {
-  "last_scheduled_run": "2026-09-04T07:59:50.032Z",
+  "last_scheduled_run": "2026-09-05T07:41:20.593Z",
   "last_manual_run": null,
   "seeded_at": "2026-08-16",
   "last_run": {
     "event": "schedule",
-    "at": "2026-09-04T07:59:50.032Z",
+    "at": "2026-09-05T07:41:20.593Z",
     "gate": "failure",
     "web": "success",
-    "run_id": "33851202487",
-    "sha": "4c55ec2"
+    "run_id": "33953191986",
+    "sha": "decf99b"
   },
   "note": "定时闸门真的跑过的痕迹。只有 schedule 那次会写 last_scheduled_run，而新鲜度只读它 - 一次手动盖戳不得救活一条已经死掉的 cron。seeded_at 是我建这个文件的日子，它只买到一段嬽限期：过了嬽限期而 last_scheduled_run 还是 null，快闸门就红。"
 }
