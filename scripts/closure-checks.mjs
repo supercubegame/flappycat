@@ -26,6 +26,7 @@ export function closureChecks() {
   const m=JSON.parse(fs.readFileSync('docs/shots/provenance.json','utf8'));
   assert.equal(m.kind,'browser-ci-screenshots');assert.equal(m.shots.length,3);
   assert(/^[0-9a-f]{40}$/.test(m.source_sha));assert(/^\d+$/.test(m.run_id));
+  assert.equal(new Set(m.shots.map(s=>s.sha256)).size,3);
   const names=['ready','play','dead'];
   for(const name of names){
     const entries=m.shots.filter(x=>x.name===name);assert.equal(entries.length,1);
@@ -36,9 +37,15 @@ export function closureChecks() {
     assert.equal(b.readUInt32BE(16),CONFIG.WORLD_W);assert.equal(b.readUInt32BE(20),CONFIG.WORLD_H);
     assert.equal(crypto.createHash('sha256').update(b).digest('hex'),entries[0].sha256);assert.equal(b.length,entries[0].bytes);
   }
+  const audio=m.audio_buffer;assert.deepEqual(audio.map(x=>x.mode),['on','muted','disconnected']);
+  assert(audio[0].nonzero>0&&audio[0].peak>0&&audio[0].samples>0);
+  assert(audio[1].nonzero===0&&audio[1].contexts===0&&audio[2].nonzero===0&&audio[2].starts>0);
+  assert(audio.every(x=>x.finite===true&&x.failures===0));
   const record=JSON.parse(fs.readFileSync('docs/COMPLETED-OBLIGATIONS.json','utf8'));
-  assert.equal(new Set(record.map(x=>x.id)).size,3);
-  assert(record.some(x=>x.id==='assert-sound-is-actually-audible'&&x.disposition==='buffer-verified-speaker-unmeasurable'));
+  const ids=['replace-illustration-shots-with-real-ci-shots','assert-sound-is-actually-audible','confirm-first-scheduled-run-really-happened'];
+  assert.deepEqual(record.map(x=>x.id).sort(),[...ids].sort());
+  assert(record.every(x=>x.status==='resolved'&&x.original_due&&x.evidence));
+  assert(record.some(x=>x.id===ids[1]&&x.disposition==='buffer-verified-speaker-unmeasurable'));
   const hb=JSON.parse(fs.readFileSync('heartbeat.json'));assert(hb.last_scheduled_run&&hb.last_run.event==='schedule');
   const now=Date.parse('2026-09-07T00:00:00Z');
   const fixture=['a','b','c'].map(id=>({id,status:'pending',due:'2020-01-01',criteria:{path:id,mustInclude:'present'}}));
@@ -47,6 +54,8 @@ export function closureChecks() {
   assert.deepEqual(obligationProblems([],()=>'',now),[],'fulfilled empty pending ledger is valid');
   assert(obligationProblems({},()=>'',now).length);
   assert(obligationProblems([{...fixture[0],due:'2026-02-30'}],()=> 'present',now).some(x=>x.includes('invalid due')));
+  assert(obligationProblems([fixture[0],fixture[0]],()=> 'present',now).some(x=>x.includes('duplicate')));
+  assert(obligationProblems(fixture,()=>{throw Error('missing');},now).filter(x=>x.includes('unreadable')).length===3);
   if(problems.length)throw Error(problems.join('\n'));
   return '3 screenshot PNG payloads/hash/dimensions checked; all obligation problems aggregated; audio speaker boundary recorded';
 }
