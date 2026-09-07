@@ -19,125 +19,61 @@ function walk(d, hits = []){
   }
   return hits;
 }
-
 function findFile(name){
-  try {
-    return walk(dir).find(p => path.basename(p) === name) || null;
-  } catch {
-    return null;
-  }
+  try { return walk(dir).find(p => path.basename(p) === name) || null; } catch { return null; }
 }
-
-function readJson(file){
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
-}
-
-function tail(text, lines = LOG_TAIL_LINES){
-  return String(text || '').replace(/\s+$/, '').split('\n').slice(-lines).join('\n');
-}
-
-function fold(summary, text){
-  return '<details><summary>' + summary + '</summary>\n\n```\n' + text + '\n```\n\n</details>';
-}
-
+function readJson(file){try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }}
+function tail(text, lines = LOG_TAIL_LINES){return String(text || '').replace(/\s+$/, '').split('\n').slice(-lines).join('\n');}
+function fold(summary, text){return '<details><summary>' + summary + '</summary>\n\n```\n' + text + '\n```\n\n</details>';}
 function missingSection(gate){
   const logFile = findFile('stdout-' + gate.slug + '.log');
   const log = logFile ? tail(fs.readFileSync(logFile, 'utf8')) : '';
-  return [
-    '### ❌ ' + gate.label + ' - 没有产出报告',
-    '',
-    '闸门在写出报告之前就崩了，或者 artifact 根本没上传。这算失败。',
-    '',
-    log ? fold('stdout 末尾', log.slice(-8000)) : '连 stdout 也没拿到，去看 workflow，不是看闸门。',
-    '',
-  ].join('\n');
+  return ['### ❌ ' + gate.label + ' - 没有产出报告','','闸门在写出报告之前就崩了，或者 artifact 根本没上传。这算失败。','',log ? fold('stdout 末尾', log.slice(-8000)) : '连 stdout 也没拿到，去看 workflow，不是看闸门。',''].join('\n');
 }
-
 function engSection(data){
-  const m = data.metrics || {};
-  const hb = m.heartbeat || {};
+  const m = data.metrics || {}, hb = m.heartbeat || {};
   return [
-    '### ' + (data.failures.length ? '❌' : '✅') + ' 引擎闸门 - ' + data.passed + '/' + data.total,
-    '',
+    '### ' + (data.failures.length ? '❌' : '✅') + ' 引擎闸门 - ' + data.passed + '/' + data.total,'',
     '- 单元 / 结构检查: ' + m.unitPass + ' 项',
     '- 机器人种子: ' + m.seeds + '，得分中位 ' + m.medianScore + '，范围 ' + m.minScore + '-' + m.maxScore,
     '- 两管之间最大可爬升: ' + m.maxClimb + ' px，允许偏移 ' + m.maxGapDelta,
     '- 压测: ' + m.perfMs + ' ms / ' + m.perfFrames + ' steps',
     '- 规矩文件: ' + m.rulesLines + ' 行',
     '- 变异体: ' + m.mutantsKilled + '/' + m.mutantsTotal,
-    '- 心跳: `' + hb.state + '`，' + hb.ageDays + ' 天（上限 ' + hb.maxAgeDays +
-      '）· 定时 ' + JSON.stringify(hb.crons) + ' · 上次定时 ' + hb.lastScheduledRun +
-      ' · 上次手动 ' + hb.lastManualRun,
-    '',
+    '- 心跳: `' + hb.state + '`，' + hb.ageDays + ' 天（上限 ' + hb.maxAgeDays + '）· 定时 ' + JSON.stringify(hb.crons) + ' · 上次定时 ' + hb.lastScheduledRun + ' · 上次手动 ' + hb.lastManualRun,'',
   ].join('\n');
 }
-
 function webSection(data){
-  const m = data.metrics || {};
-  const audio = m.audio || {};
+  const m = data.metrics || {}, audio = m.audio || {};
   return [
-    '### ' + (data.failures.length ? '❌' : '✅') + ' 浏览器闸门 - ' + data.passed + '/' + data.total,
-    '',
+    '### ' + (data.failures.length ? '❌' : '✅') + ' 浏览器闸门 - ' + data.passed + '/' + data.total,'',
     '- 画布: ' + m.canvas,
-    '- 浏览器跑到帧 ' + m.botFrames + '：分数 ' + m.botScore +
-      '，纯引擎同帧数 ' + m.engineScoreSameFrames + '（这两个必须相等）',
+    '- 浏览器跑到帧 ' + m.botFrames + '：分数 ' + m.botScore + '，纯引擎同帧数 ' + m.engineScoreSameFrames + '（这两个必须相等）',
     '- 管体像素: 实际 ' + m.pipePixels + '，期望 ' + m.expectedPipePixels,
     '- 管口像素: 实际 ' + m.capPixels + '，期望 ' + m.expectedCapPixels,
     '- 弹窗横带像素: 实际 ' + m.deadStripPixels + '，期望 ' + m.expectedDeadStripPixels,
     '- 字体度量（实测）: 标题上伸 ' + m.titleAscent + '，正文下伸 ' + m.bodyDescent,
     '- 帧率: ' + m.fps + '（下限 ' + m.fpsFloor + '，实测基线 ' + m.fpsBaseline + '）',
-    '- 最高分: 跑出 ' + m.bestRunScore + '，重载后 ' + m.bestAfterReload +
-      '（存储降级: ' + (m.storageDegraded ? '是' : '否') + '）',
-    '- 声音: 开着启动 ' + m.audioStartsUnmuted + ' 个节点，关了新增 ' + m.audioStartsMuted +
-      '（失败 ' + audio.failures + '，上下文状态 ' + audio.contextState + '）',
-    '- 截图: ' + (m.shots || []).map(s => s.name + ' ' + s.bytes + 'B png ' + s.sha.slice(0, 8) +
-      ' canvas ' + s.canvasSha).join(' · '),
-    '',
+    '- 最高分: 跑出 ' + m.bestRunScore + '，重载后 ' + m.bestAfterReload + '（存储降级: ' + (m.storageDegraded ? '是' : '否') + '）',
+    '- 声音: 开着启动 ' + m.audioStartsUnmuted + ' 个节点，关了新增 ' + m.audioStartsMuted + '（失败 ' + audio.failures + '，上下文状态 ' + audio.contextState + '）',
+    '- 实际游戏音频 PCM: ' + (m.audioBuffer ? JSON.stringify(m.audioBuffer) : '本轮没有缓冲区证据'),
+    '- PCM 非零只证明图输出；用户扬声器是否可听见仍需人工验收。',
+    '- 截图: ' + (m.shots || []).map(s => s.name + ' ' + s.bytes + 'B png ' + s.sha.slice(0, 8) + ' canvas ' + s.canvasSha).join(' · '),'',
   ].join('\n');
 }
-
-let failed = false;
-let passedCount = 0;
-let totalCount = 0;
-const sections = [];
-const failures = [];
-
+let failed = false, passedCount = 0, totalCount = 0;
+const sections = [], failures = [];
 for (const gate of GATES){
-  const file = findFile(gate.file);
-  const data = file ? readJson(file) : null;
-  if (!data){
-    failed = true;
-    sections.push(missingSection(gate));
-    continue;
-  }
-  passedCount += data.passed;
-  totalCount += data.total;
+  const file = findFile(gate.file), data = file ? readJson(file) : null;
+  if (!data){failed = true; sections.push(missingSection(gate));continue;}
+  passedCount += data.passed;totalCount += data.total;
   if (data.passed !== data.total) failed = true;
   sections.push(gate.slug === 'eng' ? engSection(data) : webSection(data));
   for (const f of data.failures || []) failures.push(gate.label + ' · ' + f);
 }
-
-if (failures.length){
-  sections.push(['### 失败项', '', ...failures.map(f => '- ' + f), ''].join('\n'));
-}
-
+if (failures.length) sections.push(['### 失败项', '', ...failures.map(f => '- ' + f), ''].join('\n'));
 const sha = (process.env.GITHUB_SHA || 'local').slice(0, 7);
-const runLink = process.env.GITHUB_RUN_ID
-  ? ' · [完整日志](' + (process.env.GITHUB_SERVER_URL || 'https://github.com') + '/' +
-    (process.env.GITHUB_REPOSITORY || '') + '/actions/runs/' + process.env.GITHUB_RUN_ID + ')'
-  : '';
-const body = [
-  (failed ? '## 验证闸门有失败' : '## 验证闸门全部通过'),
-  '',
-  passedCount + '/' + totalCount + ' 项通过 · 提交 `' + sha + '`' + runLink,
-  '',
-  ...sections,
-].join('\n');
-
-if (checkOnly){
-  process.stdout.write((failed ? 'FAILED' : 'PASSED') + ': ' + passedCount + '/' + totalCount + '\n');
-  process.exit(failed ? 1 : 0);
-}
-
-fs.writeFileSync('comment.md', body.slice(0, 60000));
-process.stdout.write(body + '\n');
+const runLink = process.env.GITHUB_RUN_ID ? ' · [完整日志](' + (process.env.GITHUB_SERVER_URL || 'https://github.com') + '/' + (process.env.GITHUB_REPOSITORY || '') + '/actions/runs/' + process.env.GITHUB_RUN_ID + ')' : '';
+const body = [(failed ? '## 验证闸门有失败' : '## 验证闸门全部通过'),' ',passedCount + '/' + totalCount + ' 项通过 · 提交 `' + sha + '`' + runLink,'',...sections].join('\n');
+if (checkOnly){console.log((failed ? 'FAILED' : 'PASSED') + ': ' + passedCount + '/' + totalCount);process.exit(failed ? 1 : 0);}
+fs.writeFileSync('comment.md', body.slice(0, 60000));console.log(body);

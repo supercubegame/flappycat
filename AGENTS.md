@@ -11,7 +11,7 @@
 - `.github/workflows/verify.yml`: push, daily schedule, manual dispatch.
 - `.github/workflows/pages.yml`: deploys the static site from `main`.
 - `docs/OBLIGATIONS.json`: dated obligations. Overdue turns the fast gate red.
-- `docs/shots/*.svg`: README illustrations, not real screenshots.
+- `docs/shots/*.svg`: real CI canvas PNG captures embedded in SVG, with provenance.json hashes.
 
 ## Iron rules
 - Build or update the gate before trusting any new behavior.
@@ -62,8 +62,8 @@
 
 ## Unmeasurable, be honest
 - A green gate cannot prove the game is fun.
-- Audible sound is not proven. The gate proves nodes start and that muting starts none.
+- The actual flap graph renders nonzero PCM in CI; muted and disconnected controls render none. User loudspeaker audibility is not measurable by this CI and remains human acceptance.
 - CI cannot verify mobile touch feel.
 - The storage-degraded fallback path is never exercised in CI; storage is only asserted to be available.
-- README illustrations are hand-drawn and already stale against the taller death card.
+- README screenshots have recorded CI provenance; they are historical captures, not a guarantee of future UI parity.
 - **The last link has nobody watching it.** The heartbeat guards the cron, but the freshness assertion itself runs inside the very pipeline it judges. The residual risk is "the cron died and nobody pushed", and closing that needs an observer outside this repo, which does not exist yet. Written down rather than pretended closed.

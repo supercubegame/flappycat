@@ -24,6 +24,7 @@ import { chromium } from 'playwright';
 import { CONFIG, botInput, createState, step } from '../src/engine.mjs';
 import { FPS_FLOOR, FPS_MEASURED_BASELINE, FPS_MARGIN_MULTIPLE, floorIsNotEmpty, floorKeepsMargin } from './fps-floor.mjs';
 import { startServer } from './serve.mjs';
+import { audioBufferCheck } from './audio-buffer-check.mjs';
 
 const BOT_FRAMES = 720;
 const SHOT_SEED = 7;
@@ -83,7 +84,11 @@ async function boot(page, url){
 
 async function shoot(page, name){
   const canvasSha = await page.evaluate(() => window.__FLAPPY.canvasHash());
-  const buffer = await page.locator('#game').screenshot({ type: 'png' });
+  // Native rendered canvas pixels, not CSS-rounded element bounds (which measured 480x641).
+  const png = await page.locator('#game').evaluate(c => c.toDataURL('image/png'));
+  const buffer = Buffer.from(png.split(',')[1], 'base64');
+  eq(buffer.readUInt32BE(16), CONFIG.WORLD_W, 'capture native width');
+  eq(buffer.readUInt32BE(20), CONFIG.WORLD_H, 'capture native height');
   fs.writeFileSync(path.join(artifactsDir, name), buffer);
   metrics.shots.push({
     name,
@@ -443,6 +448,10 @@ await check('three-shots-are-distinct', async () => {
   eq(new Set(metrics.shots.map(s => s.sha)).size, 3, 'distinct png hashes');
   eq(new Set(metrics.shots.map(s => s.canvasSha)).size, 3, 'distinct canvas pixel hashes');
   for (const shot of metrics.shots) assert(shot.bytes > 1000, shot.name + ' is only ' + shot.bytes + ' bytes');
+});
+
+await check('real-audio-buffer-and-negative-controls', async () => {
+  metrics.audioBuffer = await audioBufferCheck(browser, server.url);
 });
 
 await browser.close();

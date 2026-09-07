@@ -6,6 +6,8 @@ import { CONFIG, bestOf, botInput, createState, digest, gapRange, pipeGeometry, 
 import { FIXTURES, storageCalls, storageKeyLiterals, stripCommentsAndStrings, unregisteredStorageCalls } from './storage-scan.mjs';
 import { HEARTBEAT_FILE, HEARTBEAT_GRACE_DAYS, MAX_HEARTBEAT_AGE_DAYS, cadenceDays, cronMinute, cronsFromWorkflow, expectedMaxAgeDays, heartbeatIsHealthy, heartbeatStatus, heartbeatWriteGuard } from './heartbeat.mjs';
 
+import { closureChecks } from './closure-checks.mjs';
+
 const failures = [];
 let passed = 0;
 let mutationChecks = 0;
@@ -643,16 +645,7 @@ check('readme-documents-features-that-exist-in-code', () => {
 });
 
 check('obligations-are-live-and-not-overdue', () => {
-  const now = new Date();
-  const items = JSON.parse(fs.readFileSync('docs/OBLIGATIONS.json', 'utf8'));
-  assert(items.length > 0, 'obligation list is empty');
-  for (const item of items){
-    assert(item.status === 'pending', item.id + ' is done but still listed, delete it');
-    assert(new Date(item.due + 'T23:59:59+08:00') >= now, item.id + ' is overdue, do it or move it to unmeasurable');
-    const body = fs.readFileSync(item.criteria.path, 'utf8');
-    assert(body.includes(item.criteria.mustInclude),
-      item.id + ' completion marker is gone from ' + item.criteria.path + ' - if it is done, delete the obligation');
-  }
+  console.log(closureChecks());
 });
 
 check('obligation-checker-mutation-proves-itself', () => {
