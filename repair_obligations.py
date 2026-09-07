@@ -4,7 +4,7 @@ from pathlib import Path
 R=Path(__file__).resolve().parent
 
 def replace(s,old,new):
-    if new in s and old not in s:return s
+    if new in s:return s
     assert s.count(old)==1,old[:80]
     return s.replace(old,new,1)
 
