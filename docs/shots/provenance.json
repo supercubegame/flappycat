@@ -1,0 +1,59 @@
+{
+  "kind": "browser-ci-screenshots",
+  "capture": "native canvas PNG export from real running Chromium page; not CSS element bounding-box screenshot",
+  "source_sha": "254a54d1f187a0a1a295ff357c43d44841b372ae",
+  "run_id": "34090559688",
+  "run_attempt": "1",
+  "shots": [
+    {
+      "name": "ready",
+      "bytes": 23872,
+      "sha256": "64121806d717663d77fa9f9b654e4ce57cf334e9a88e06fd18efd2dbd8199045",
+      "canvas_sha": "7e2aa416"
+    },
+    {
+      "name": "play",
+      "bytes": 15732,
+      "sha256": "3ee49fc66eb591314ccee886dee1fb9df02cfc0c21c42f11f6acf56c8da27cdc",
+      "canvas_sha": "abba5b9c"
+    },
+    {
+      "name": "dead",
+      "bytes": 30873,
+      "sha256": "52b94d2115d2306a947254086d83e261b71fa8099e36c674c86af44d1947f552",
+      "canvas_sha": "0a7031a0"
+    }
+  ],
+  "audio_buffer": [
+    {
+      "mode": "on",
+      "contexts": 1,
+      "peak": 0.05967969447374344,
+      "nonzero": 3086,
+      "finite": true,
+      "samples": 22050,
+      "starts": 1,
+      "failures": 0
+    },
+    {
+      "mode": "muted",
+      "contexts": 0,
+      "peak": 0,
+      "nonzero": 0,
+      "finite": true,
+      "samples": 0,
+      "starts": 0,
+      "failures": 0
+    },
+    {
+      "mode": "disconnected",
+      "contexts": 1,
+      "peak": 0,
+      "nonzero": 0,
+      "finite": true,
+      "samples": 22050,
+      "starts": 1,
+      "failures": 0
+    }
+  ]
+}
