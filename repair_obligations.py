@@ -1,7 +1,15 @@
 """Approved bounded CI-side changes; original game source is not modified."""
-import base64,hashlib,json,os,re,struct,sys
+import base64,hashlib,json,os,re,struct,sys,traceback
 from pathlib import Path
 R=Path(__file__).resolve().parent
+
+def report_exception(kind,value,tb):
+    trace=''.join(traceback.format_exception(kind,value,tb))
+    p=R/'artifacts/verify-web-report.json'
+    if p.exists():
+        data=json.loads(p.read_text());data['failures'].append('closure-publish: '+trace[-6000:]);data['total']+=1;p.write_text(json.dumps(data,indent=2))
+    sys.__excepthook__(kind,value,tb)
+sys.excepthook=report_exception
 
 def replace(s,old,new):
     if new in s:return s
@@ -22,7 +30,7 @@ assert a[0]['nonzero']>0 and a[1]['nonzero']==0 and a[2]['nonzero']==0
 shots=[]
 for name in ['ready','play','dead']:
     b=(R/('artifacts/shot-'+name+'.png')).read_bytes();assert b[:8]==b'\x89PNG\r\n\x1a\n'
-    w,h=struct.unpack('>II',b[16:24]);assert (w,h)==(480,640)
+    w,h=struct.unpack('>II',b[16:24]);assert (w,h)==(480,640),(name,w,h)
     sha=hashlib.sha256(b).hexdigest();entry=next(x for x in report['metrics']['shots'] if x['name']=='shot-'+name+'.png');assert entry['sha']==sha
     svg=f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" data-kind="ci-screenshot"><title>Actual CI browser capture: {name}</title><image width="{w}" height="{h}" href="data:image/png;base64,{base64.b64encode(b).decode()}"/></svg>\n'
     (R/('docs/shots/'+name+'.svg')).write_text(svg)
