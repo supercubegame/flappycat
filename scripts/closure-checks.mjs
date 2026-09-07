@@ -46,7 +46,12 @@ export function closureChecks() {
   assert.deepEqual(record.map(x=>x.id).sort(),[...ids].sort());
   assert(record.every(x=>x.status==='resolved'&&x.original_due&&x.evidence));
   assert(record.some(x=>x.id===ids[1]&&x.disposition==='buffer-verified-speaker-unmeasurable'));
-  const hb=JSON.parse(fs.readFileSync('heartbeat.json'));assert(hb.last_scheduled_run&&hb.last_run.event==='schedule');
+  const historic=record.find(x=>x.id===ids[2]).evidence;
+  assert(Number.isFinite(Date.parse(historic.at))&&/^\d+$/.test(historic.run_id));
+  const hasScheduled=hb=>typeof hb.last_scheduled_run==='string'&&Number.isFinite(Date.parse(hb.last_scheduled_run));
+  const hb=JSON.parse(fs.readFileSync('heartbeat.json'));assert(hasScheduled(hb));
+  assert(hasScheduled({...hb,last_run:{event:'workflow_dispatch'}}),'later manual heartbeat does not erase scheduled history');
+  assert(!hasScheduled({last_scheduled_run:null,last_manual_run:new Date().toISOString()}),'manual stamp cannot stand in for scheduled history');
   const now=Date.parse('2026-09-07T00:00:00Z');
   const fixture=['a','b','c'].map(id=>({id,status:'pending',due:'2020-01-01',criteria:{path:id,mustInclude:'present'}}));
   const bad=obligationProblems(fixture,()=>'',now);
